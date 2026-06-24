@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>停车场实时监控</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="container">
+
+      <!-- ====== Top-Left: Parking A ====== -->
+      <div class="parking-card" id="card-a">
+        <div class="status-dot" id="status-dot-a" title="数据连接状态"></div>
+        <div class="name" id="name-a">A 停车场</div>
+        <div class="available-label">空闲车位</div>
+        <div class="available-num" id="available-a">--</div>
+        <div class="total">总车位 <span id="total-a">--</span></div>
+      </div>
+
+      <!-- ====== Top-Right: Parking B ====== -->
+      <div class="parking-card" id="card-b">
+        <div class="status-dot" id="status-dot-b" title="数据连接状态"></div>
+        <div class="name" id="name-b">B 停车场</div>
+        <div class="available-label">空闲车位</div>
+        <div class="available-num" id="available-b">--</div>
+        <div class="total">总车位 <span id="total-b">--</span></div>
+      </div>
+
+      <!-- ====== Bottom-Left: Video A ====== -->
+      <div class="video-panel" id="video-a">
+        <div class="video-placeholder" id="placeholder-a">
+          <span class="icon">📷</span>
+          <span class="text">监控画面 A</span>
+        </div>
+      </div>
+
+      <!-- ====== Bottom-Right: Video B ====== -->
+      <div class="video-panel" id="video-b">
+        <div class="video-placeholder" id="placeholder-b">
+          <span class="icon">📷</span>
+          <span class="text">监控画面 B</span>
+        </div>
+      </div>
+
+    </div><!-- /#container -->
+  </div><!-- /#app -->
+
+  <script src="js/config.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

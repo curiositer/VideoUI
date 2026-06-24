@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>停车场大屏 — 配置管理</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="admin-body">
+  <div class="admin-wrapper">
+
+    <a href="index.html" class="back-link">← 返回大屏</a>
+
+    <h1>⚙ 大屏配置</h1>
+    <p class="subtitle">修改配置后点击保存，返回大屏页面刷新即可生效</p>
+
+    <!-- === Data Source === -->
+    <div class="form-section">
+      <h2>数据接口</h2>
+
+      <div class="form-group">
+        <label for="updateInterval">数据刷新间隔（秒）</label>
+        <input type="number" id="updateInterval" min="1" max="3600" value="10">
+        <span class="hint">车位数据轮询间隔，默认 10 秒</span>
+      </div>
+
+      <div class="form-group">
+        <label for="apiMode">接口模式</label>
+        <select id="apiMode">
+          <option value="separate">独立接口 — 两个停车场各自请求</option>
+          <option value="combined">合并接口 — 一次请求获取全部数据</option>
+        </select>
+      </div>
+
+      <div id="separate-fields">
+        <div class="form-group">
+          <label for="apiUrlA">A 停车场数据接口 URL</label>
+          <input type="text" id="apiUrlA" placeholder="/api/parking/a">
+          <span class="hint">返回 JSON: { "total": 200, "available": 45 }</span>
+        </div>
+        <div class="form-group">
+          <label for="apiUrlB">B 停车场数据接口 URL</label>
+          <input type="text" id="apiUrlB" placeholder="/api/parking/b">
+          <span class="hint">返回 JSON: { "total": 200, "available": 45 }</span>
+        </div>
+      </div>
+
+      <div id="combined-fields" style="display:none;">
+        <div class="form-group">
+          <label for="combinedApiUrl">合并数据接口 URL</label>
+          <input type="text" id="combinedApiUrl" placeholder="/api/parking/all">
+          <span class="hint">返回 JSON: { "a": {"total":200,"available":45}, "b": {"total":150,"available":32} }</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- === Video === -->
+    <div class="form-section">
+      <h2>监控画面</h2>
+
+      <div class="form-group">
+        <label for="videoType">视频嵌入方式</label>
+        <select id="videoType">
+          <option value="iframe">iframe（IP 摄像头网页）</option>
+          <option value="hls">HLS 视频流（.m3u8）</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="videoUrlA">A 停车场监控画面 URL</label>
+        <input type="text" id="videoUrlA" placeholder="https://... 或 http://...">
+        <span class="hint">支持 IP 摄像头网页地址或 .m3u8 流地址</span>
+      </div>
+
+      <div class="form-group">
+        <label for="videoUrlB">B 停车场监控画面 URL</label>
+        <input type="text" id="videoUrlB" placeholder="https://... 或 http://...">
+        <span class="hint">支持 IP 摄像头网页地址或 .m3u8 流地址</span>
+      </div>
+    </div>
+
+    <!-- === Display === -->
+    <div class="form-section">
+      <h2>显示设置</h2>
+      <div class="form-group">
+        <label for="parkingNameA">A 停车场显示名称</label>
+        <input type="text" id="parkingNameA" placeholder="A 停车场">
+      </div>
+      <div class="form-group">
+        <label for="parkingNameB">B 停车场显示名称</label>
+        <input type="text" id="parkingNameB" placeholder="B 停车场">
+      </div>
+    </div>
+
+    <!-- === Actions === -->
+    <div class="form-actions">
+      <button class="btn btn-primary" id="btn-save">保存配置</button>
+      <button class="btn btn-secondary" id="btn-reset">恢复默认</button>
+    </div>
+
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>
