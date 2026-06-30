@@ -19,9 +19,9 @@
       <h2>数据接口</h2>
 
       <div class="form-group">
-        <label for="updateInterval">数据刷新间隔（秒）</label>
-        <input type="number" id="updateInterval" min="1" max="3600" value="10">
-        <span class="hint">车位数据轮询间隔，默认 10 秒</span>
+        <label for="rotationInterval">A/B 切换间隔（秒）</label>
+        <input type="number" id="rotationInterval" min="1" max="3600" value="10">
+        <span class="hint">两个停车场自动轮换及数据刷新间隔，默认 10 秒</span>
       </div>
 
       <div class="form-group">
@@ -69,13 +69,13 @@
       <div class="form-group">
         <label for="videoUrlA">A 停车场监控画面 URL</label>
         <input type="text" id="videoUrlA" placeholder="https://... 或 http://...">
-        <span class="hint">支持 IP 摄像头网页地址或 .m3u8 流地址</span>
+        <span class="hint">IP 摄像头网页地址或 .m3u8 流地址，切换至该车场时显示</span>
       </div>
 
       <div class="form-group">
         <label for="videoUrlB">B 停车场监控画面 URL</label>
         <input type="text" id="videoUrlB" placeholder="https://... 或 http://...">
-        <span class="hint">支持 IP 摄像头网页地址或 .m3u8 流地址</span>
+        <span class="hint">IP 摄像头网页地址或 .m3u8 流地址，切换至该车场时显示</span>
       </div>
     </div>
 

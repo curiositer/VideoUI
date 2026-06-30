@@ -7,16 +7,16 @@
 
   // --- Form field ↔ config key mapping ---
   const FIELD_MAP = [
-    { id: 'updateInterval',  key: 'updateInterval',   type: 'number' },
-    { id: 'apiMode',         key: 'apiMode',          type: 'value' },
-    { id: 'apiUrlA',         key: 'apiUrlA',          type: 'value' },
-    { id: 'apiUrlB',         key: 'apiUrlB',          type: 'value' },
-    { id: 'combinedApiUrl',  key: 'combinedApiUrl',   type: 'value' },
-    { id: 'videoUrlA',       key: 'videoUrlA',        type: 'value' },
-    { id: 'videoUrlB',       key: 'videoUrlB',        type: 'value' },
-    { id: 'videoType',       key: 'videoType',        type: 'value' },
-    { id: 'parkingNameA',    key: 'parkingNameA',     type: 'value' },
-    { id: 'parkingNameB',    key: 'parkingNameB',     type: 'value' },
+    { id: 'rotationInterval', key: 'rotationInterval', type: 'number' },
+    { id: 'apiMode',          key: 'apiMode',          type: 'value' },
+    { id: 'apiUrlA',          key: 'apiUrlA',          type: 'value' },
+    { id: 'apiUrlB',          key: 'apiUrlB',          type: 'value' },
+    { id: 'combinedApiUrl',   key: 'combinedApiUrl',   type: 'value' },
+    { id: 'videoUrlA',        key: 'videoUrlA',        type: 'value' },
+    { id: 'videoUrlB',        key: 'videoUrlB',        type: 'value' },
+    { id: 'videoType',        key: 'videoType',        type: 'value' },
+    { id: 'parkingNameA',     key: 'parkingNameA',     type: 'value' },
+    { id: 'parkingNameB',     key: 'parkingNameB',     type: 'value' },
   ];
 
   const apiModeSelect = document.getElementById('apiMode');
@@ -59,6 +59,8 @@
         config[key] = el.value;
       }
     });
+    // Keep updateInterval in sync for backward compatibility
+    config.updateInterval = config.rotationInterval;
     return config;
   }
 

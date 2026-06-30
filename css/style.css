@@ -1,6 +1,7 @@
 /* ============================================================
    Parking Display Screen — Styles
-   9:4 aspect ratio, 2x2 grid, dark theme for large LED display
+   9:4 aspect ratio, 2x2 grid, dark theme for large outdoor LED display
+   Optimized for tourist-facing outdoor screen: large fonts, high contrast
    ============================================================ */
 
 /* --- Reset & Base --- */
@@ -35,25 +36,25 @@ html, body {
   height: min(100vh, calc(100vw * 4 / 9));
 
   display: grid;
-  grid-template-rows: 1fr 2fr;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 3fr 1fr;
   gap: 6px;
   padding: 6px;
   background: #080e1e;
 }
 
-/* --- Parking Info Cards (top row) --- */
+/* ============================================================
+   Parking Info Cards (top row)
+   ============================================================ */
 .parking-card {
   background: linear-gradient(135deg, #0f1a2e 0%, #111d33 100%);
   border: 1px solid rgba(6, 182, 212, 0.25);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 4% 6%;
+  padding: 0 3%;
   position: relative;
   overflow: hidden;
+  transition: opacity 0.3s ease;
 }
 
 /* Subtle top accent line */
@@ -68,72 +69,130 @@ html, body {
   opacity: 0.6;
 }
 
-.parking-card .name {
-  color: #94a3b8;
-  font-size: clamp(14px, 3vh, 28px);
-  font-weight: 400;
-  letter-spacing: 0.15em;
-  margin-bottom: 2%;
-}
-
-.parking-card .available-label {
-  color: #64748b;
-  font-size: clamp(10px, 1.8vh, 18px);
-  letter-spacing: 0.1em;
-  margin-bottom: 1%;
-}
-
-.parking-card .available-num {
-  color: #10b981;
-  font-size: clamp(36px, 10vh, 100px);
-  font-weight: 700;
-  line-height: 1;
-  transition: all 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  text-shadow: 0 0 30px rgba(16, 185, 129, 0.4);
-}
-
-.parking-card .available-num.updating {
-  transform: scale(1.08);
-  color: #34d399;
-}
-
-.parking-card .total {
-  color: #cbd5e1;
-  font-size: clamp(11px, 2vh, 20px);
-  margin-top: 3%;
-  letter-spacing: 0.05em;
-}
-
-.parking-card .total span {
-  color: #f1f5f9;
-  font-weight: 600;
-}
-
-/* Status indicator dot */
+/* Status dot — absolute positioned top-right */
 .parking-card .status-dot {
   position: absolute;
-  top: 12px;
-  right: 16px;
-  width: 8px;
-  height: 8px;
+  top: 10px;
+  right: 14px;
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
   border-radius: 50%;
   background: #10b981;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
   transition: background 0.3s, box-shadow 0.3s;
+  z-index: 2;
 }
 
 .parking-card .status-dot.error {
   background: #ef4444;
-  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.6);
 }
 
-/* --- Video Panels (bottom row) --- */
-.video-panel {
+/* --- Stats stack: three lines filling entire card --- */
+.parking-card .stats-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+}
+
+/* Each stat line: label + value + unit on one baseline */
+.parking-card .stat-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.3em;
+  line-height: 1.1;
+}
+
+/* Label and unit — smaller but still readable outdoors */
+.parking-card .stat-label,
+.parking-card .stat-unit {
+  font-size: clamp(44px, 22vh, 28px);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* The big number */
+.parking-card .stat-value {
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  transition: all 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Name — cyan, same size as available number */
+.parking-card .stat-line.name .stat-value {
+  font-size: clamp(42px, 11vh, 150px);
+  color: #06b6d4;
+  text-shadow:
+    0 0 20px rgba(6, 182, 212, 0.5),
+    0 0 60px rgba(6, 182, 212, 0.2);
+  font-weight: 700;
+}
+
+/* Available — green (top line) */
+.parking-card .stat-line.available .stat-value {
+  font-size: clamp(42px, 11vh, 150px);
+  color: #10b981;
+  text-shadow:
+    0 0 20px rgba(16, 185, 129, 0.5),
+    0 0 60px rgba(16, 185, 129, 0.2);
+}
+.parking-card .stat-line.available .stat-label,
+.parking-card .stat-line.available .stat-unit {
+  color: #94a3b8;
+}
+
+/* Total — red (bottom line) */
+.parking-card .stat-line.total .stat-value {
+  font-size: clamp(36px, 9vh, 130px);
+  color: #ef4444;
+  text-shadow:
+    0 0 20px rgba(239, 68, 68, 0.5),
+    0 0 60px rgba(239, 68, 68, 0.2);
+}
+.parking-card .stat-line.total .stat-label,
+.parking-card .stat-line.total .stat-unit {
+  color: #94a3b8;
+}
+
+/* Pulse animation on number change */
+.parking-card .stat-value.updating {
+  transform: scale(1.06);
+}
+.parking-card .stat-line.available .stat-value.updating {
+  color: #34d399;
+}
+.parking-card .stat-line.total .stat-value.updating {
+  color: #f87171;
+}
+
+/* ============================================================
+   Video Area & Panels — stacked, only active visible
+   ============================================================ */
+.video-area {
+  display: grid;
+  grid-template: 1fr / 1fr;
   background: #02050d;
   border: 1px solid rgba(6, 182, 212, 0.2);
   border-radius: 8px;
-  position: relative;
   overflow: hidden;
+}
+
+/* Both panels stack in the same grid cell */
+.video-panel {
+  position: relative;
+  grid-row: 1;
+  grid-column: 1;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.video-panel.active {
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .video-panel iframe,
@@ -144,7 +203,7 @@ html, body {
   object-fit: contain;
 }
 
-/* Placeholder when no video URL */
+/* --- No-signal placeholder --- */
 .video-placeholder {
   position: absolute;
   inset: 0;
@@ -152,18 +211,32 @@ html, body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #334155;
   pointer-events: none;
+  gap: 2%;
 }
 
 .video-placeholder .icon {
-  font-size: clamp(24px, 5vh, 48px);
-  margin-bottom: 2%;
+  font-size: clamp(28px, 6vh, 64px);
+  opacity: 0.5;
+  animation: placeholderPulse 3s ease-in-out infinite;
 }
 
 .video-placeholder .text {
-  font-size: clamp(10px, 1.8vh, 18px);
+  color: #475569;
+  font-size: clamp(12px, 2.5vh, 28px);
+  font-weight: 500;
   letter-spacing: 0.1em;
+}
+
+.video-placeholder .sub {
+  color: #334155;
+  font-size: clamp(10px, 1.6vh, 18px);
+  letter-spacing: 0.05em;
+}
+
+@keyframes placeholderPulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 0.65; }
 }
 
 /* --- Error overlay --- */

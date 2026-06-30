@@ -5,7 +5,10 @@
 const STORAGE_KEY = 'parking_display_config';
 
 const DEFAULT_CONFIG = {
-  // Update interval in seconds
+  // A/B rotation interval in seconds (switches parking lot + refreshes data)
+  rotationInterval: 10,
+
+  // Update interval in seconds (kept for backward compatibility)
   updateInterval: 10,
 
   // API mode: 'separate' = two endpoints (apiUrlA / apiUrlB)
@@ -19,7 +22,7 @@ const DEFAULT_CONFIG = {
   // Combined mode — returns { a: {total, available}, b: {total, available} }
   combinedApiUrl: '/api/parking/all',
 
-  // Video stream URLs (iframe or HLS .m3u8)
+  // Video stream URLs (iframe or HLS .m3u8) — one per parking lot
   videoUrlA: '',
   videoUrlB: '',
 
@@ -40,8 +43,12 @@ function getConfig() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const stored = JSON.parse(raw);
-      // Deep-merge: stored values override defaults, missing keys use defaults
-      return { ...DEFAULT_CONFIG, ...stored };
+      const config = { ...DEFAULT_CONFIG, ...stored };
+      // Fallback: existing configs may lack rotationInterval
+      if (config.rotationInterval == null) {
+        config.rotationInterval = config.updateInterval || 10;
+      }
+      return config;
     }
   } catch (e) {
     console.warn('Failed to read config from localStorage, using defaults.', e);

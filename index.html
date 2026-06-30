@@ -11,37 +11,44 @@
   <div id="app">
     <div id="container">
 
-      <!-- ====== Top-Left: Parking A ====== -->
-      <div class="parking-card" id="card-a">
-        <div class="status-dot" id="status-dot-a" title="数据连接状态"></div>
-        <div class="name" id="name-a">A 停车场</div>
-        <div class="available-label">空闲车位</div>
-        <div class="available-num" id="available-a">--</div>
-        <div class="total">总车位 <span id="total-a">--</span></div>
-      </div>
+      <!-- ====== Left 3/4: Video Area (stacked panels, only active one visible) ====== -->
+      <div class="video-area">
+        <!-- Parking A video panel (visible initially) -->
+        <div class="video-panel active" id="video-a">
+          <div class="video-placeholder" id="placeholder-a">
+            <span class="icon">📡</span>
+            <span class="text">暂无信号</span>
+            <span class="sub">等待视频接入…</span>
+          </div>
+        </div>
 
-      <!-- ====== Top-Right: Parking B ====== -->
-      <div class="parking-card" id="card-b">
-        <div class="status-dot" id="status-dot-b" title="数据连接状态"></div>
-        <div class="name" id="name-b">B 停车场</div>
-        <div class="available-label">空闲车位</div>
-        <div class="available-num" id="available-b">--</div>
-        <div class="total">总车位 <span id="total-b">--</span></div>
-      </div>
-
-      <!-- ====== Bottom-Left: Video A ====== -->
-      <div class="video-panel" id="video-a">
-        <div class="video-placeholder" id="placeholder-a">
-          <span class="icon">📷</span>
-          <span class="text">监控画面 A</span>
+        <!-- Parking B video panel (hidden initially) -->
+        <div class="video-panel" id="video-b">
+          <div class="video-placeholder" id="placeholder-b">
+            <span class="icon">📡</span>
+            <span class="text">暂无信号</span>
+            <span class="sub">等待视频接入…</span>
+          </div>
         </div>
       </div>
 
-      <!-- ====== Bottom-Right: Video B ====== -->
-      <div class="video-panel" id="video-b">
-        <div class="video-placeholder" id="placeholder-b">
-          <span class="icon">📷</span>
-          <span class="text">监控画面 B</span>
+      <!-- ====== Right 1/4: Single Parking Info Card ====== -->
+      <div class="parking-card" id="card-current">
+        <span class="status-dot" id="status-dot-current" title="数据连接状态"></span>
+        <div class="stats-stack">
+          <div class="stat-line name">
+            <span class="stat-value" id="name-current">加载中...</span>
+          </div>
+          <div class="stat-line available">
+            <span class="stat-label">空闲车位：</span>
+            <span class="stat-value" id="available-current">--</span>
+            <span class="stat-unit">个</span>
+          </div>
+          <div class="stat-line total">
+            <span class="stat-label">总车位：</span>
+            <span class="stat-value" id="total-current">--</span>
+            <span class="stat-unit">个</span>
+          </div>
         </div>
       </div>
 

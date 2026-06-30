@@ -1,5 +1,5 @@
 /* ============================================================
-   Main Display Logic — data fetching, UI updates, video load
+   Main Display Logic — rotation timer, data fetching, UI updates
    ============================================================ */
 
 (function () {
@@ -7,53 +7,42 @@
 
   // --- DOM refs ---
   const els = {
-    nameA:       document.getElementById('name-a'),
-    availableA:  document.getElementById('available-a'),
-    totalA:      document.getElementById('total-a'),
-    statusDotA:  document.getElementById('status-dot-a'),
-
-    nameB:       document.getElementById('name-b'),
-    availableB:  document.getElementById('available-b'),
-    totalB:      document.getElementById('total-b'),
-    statusDotB:  document.getElementById('status-dot-b'),
-
-    videoA:      document.getElementById('video-a'),
-    videoB:      document.getElementById('video-b'),
-
-    placeholderA: document.getElementById('placeholder-a'),
-    placeholderB: document.getElementById('placeholder-b'),
+    name:       document.getElementById('name-current'),
+    available:  document.getElementById('available-current'),
+    total:      document.getElementById('total-current'),
+    statusDot:  document.getElementById('status-dot-current'),
+    videoA:     document.getElementById('video-a'),
+    videoB:     document.getElementById('video-b'),
   };
 
   // --- State ---
   let config;
-  let timerId = null;
-  let consecutiveFailuresA = 0;
-  let consecutiveFailuresB = 0;
+  let currentLot = 'A';               // 'A' or 'B'
+  let rotationTimerId = null;
+  let consecutiveFailures = { A: 0, B: 0 };
+  let lastData = { A: null, B: null };
   const MAX_FAILURES = 3;
-
-  // Last known good values (preserved across failures)
-  let lastDataA = null;
-  let lastDataB = null;
 
   // --- Init ---
   function init() {
     config = getConfig();
     applyConfig();
-    fetchData();                    // Immediate first fetch
-    startTimer();
+    switchToLot('A');                 // initial display + data fetch
+    startRotation();
   }
 
   // --- Apply config to DOM ---
   function applyConfig() {
-    els.nameA.textContent = config.parkingNameA;
-    els.nameB.textContent = config.parkingNameB;
-
-    // Setup video panels
-    setupVideo('A', config.videoUrlA, els.videoA, els.placeholderA);
-    setupVideo('B', config.videoUrlB, els.videoB, els.placeholderB);
+    // Pre-load both video streams into DOM (only active panel is visible via CSS)
+    setupVideo('a', config.videoUrlA);
+    setupVideo('b', config.videoUrlB);
   }
 
-  function setupVideo(slot, url, container, placeholder) {
+  function setupVideo(slot, url) {
+    const container = document.getElementById('video-' + slot);
+    const placeholder = document.getElementById('placeholder-' + slot);
+    if (!container) return;
+
     // Clear previous content except placeholder
     const children = container.querySelectorAll(':not(.video-placeholder)');
     children.forEach(c => c.remove());
@@ -83,12 +72,54 @@
     }
   }
 
-  // --- Data Fetching ---
-  async function fetchData() {
-    if (config.apiMode === 'combined') {
-      await fetchCombined();
+  // --- Rotation ---
+  function switchToLot(lot) {
+    currentLot = lot;
+
+    // Toggle video panel visibility
+    els.videoA.classList.toggle('active', lot === 'A');
+    els.videoB.classList.toggle('active', lot === 'B');
+
+    // Update card with cached data (or placeholder)
+    els.name.textContent = lot === 'A' ? config.parkingNameA : config.parkingNameB;
+
+    const cached = lastData[lot];
+    if (cached && typeof cached.available === 'number' && typeof cached.total === 'number') {
+      updateCardUI(cached);
+      setStatus(consecutiveFailures[lot] < MAX_FAILURES);
     } else {
-      await Promise.all([fetchSingle('A', config.apiUrlA), fetchSingle('B', config.apiUrlB)]);
+      els.available.textContent = '--';
+      els.total.textContent = '--';
+      setStatus(consecutiveFailures[lot] < MAX_FAILURES);
+    }
+
+    // Fetch fresh data for the newly active lot
+    fetchDataForLot(lot);
+  }
+
+  function startRotation() {
+    stopRotation();
+    const interval = Math.max(1, config.rotationInterval || config.updateInterval || 10) * 1000;
+    rotationTimerId = setInterval(() => {
+      const nextLot = currentLot === 'A' ? 'B' : 'A';
+      switchToLot(nextLot);
+    }, interval);
+    console.log(`A/B rotation every ${config.rotationInterval || config.updateInterval || 10}s`);
+  }
+
+  function stopRotation() {
+    if (rotationTimerId) {
+      clearInterval(rotationTimerId);
+      rotationTimerId = null;
+    }
+  }
+
+  // --- Data Fetching ---
+  function fetchDataForLot(lot) {
+    if (config.apiMode === 'combined') {
+      fetchCombined();
+    } else {
+      fetchSingle(lot);
     }
   }
 
@@ -98,63 +129,83 @@
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
 
-      updateCard('A', data.a, lastDataA);
-      updateCard('B', data.b, lastDataB);
+      // Cache both lots
+      if (data.a && typeof data.a.total === 'number') {
+        lastData.A = data.a;
+        consecutiveFailures.A = 0;
+      }
+      if (data.b && typeof data.b.total === 'number') {
+        lastData.B = data.b;
+        consecutiveFailures.B = 0;
+      }
 
-      lastDataA = data.a;
-      lastDataB = data.b;
-      consecutiveFailuresA = 0;
-      consecutiveFailuresB = 0;
-      setStatus('A', true);
-      setStatus('B', true);
+      // Update UI only for currently active lot
+      const activeData = data[currentLot.toLowerCase()];
+      if (activeData && typeof activeData.total === 'number') {
+        updateCardUI(activeData);
+        setStatus(true);
+      }
     } catch (e) {
       console.error('Combined fetch failed:', e);
-      handleFailure('A');
-      handleFailure('B');
+      handleFailure(currentLot);
     }
   }
 
-  async function fetchSingle(slot, url) {
+  async function fetchSingle(lot) {
+    const url = lot === 'A' ? config.apiUrlA : config.apiUrlB;
     try {
       const resp = await fetch(url, { signal: timeoutSignal(5000) });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
 
-      if (slot === 'A') {
-        updateCard('A', data, lastDataA);
-        lastDataA = data;
-        consecutiveFailuresA = 0;
-        setStatus('A', true);
-      } else {
-        updateCard('B', data, lastDataB);
-        lastDataB = data;
-        consecutiveFailuresB = 0;
-        setStatus('B', true);
+      if (!data || typeof data.total !== 'number' || typeof data.available !== 'number') {
+        throw new Error('Invalid data format');
+      }
+
+      // Cache this lot's data
+      lastData[lot] = data;
+      consecutiveFailures[lot] = 0;
+
+      // Only update UI if this lot is still active (stale response guard)
+      if (currentLot === lot) {
+        updateCardUI(data);
+        setStatus(true);
       }
     } catch (e) {
-      console.error(`Fetch ${slot} failed:`, e);
-      handleFailure(slot);
+      console.error(`Fetch ${lot} failed:`, e);
+      // Always track failure for the lot that was requested
+      consecutiveFailures[lot]++;
+      if (consecutiveFailures[lot] >= MAX_FAILURES) {
+        lastData[lot] = null;
+      }
+      // Only update UI if this lot is still active
+      if (currentLot === lot) {
+        handleFailure(lot);
+      }
     }
   }
 
   // --- UI Updates ---
-  function updateCard(slot, data, lastData) {
+  function updateCardUI(data) {
     if (!data || typeof data.total !== 'number' || typeof data.available !== 'number') {
-      console.warn(`Invalid data for slot ${slot}:`, data);
+      console.warn('Invalid data:', data);
       return;
     }
 
-    const availEl = slot === 'A' ? els.availableA : els.availableB;
-    const totalEl = slot === 'A' ? els.totalA : els.totalB;
+    const oldAvailable = parseInt(els.available.textContent, 10);
+    const oldTotal = parseInt(els.total.textContent, 10);
 
-    // Animate number change
-    if (lastData && lastData.available !== data.available) {
-      animateNumber(availEl, data.available);
+    if (!isNaN(oldAvailable) && oldAvailable !== data.available) {
+      animateNumber(els.available, data.available);
     } else {
-      availEl.textContent = data.available;
+      els.available.textContent = data.available;
     }
 
-    totalEl.textContent = data.total;
+    if (!isNaN(oldTotal) && oldTotal !== data.total) {
+      animateNumber(els.total, data.total);
+    } else {
+      els.total.textContent = data.total;
+    }
   }
 
   function animateNumber(el, newVal) {
@@ -172,47 +223,25 @@
     setTimeout(() => el.classList.remove('updating'), 600);
   }
 
-  function setStatus(slot, ok) {
-    const dot = slot === 'A' ? els.statusDotA : els.statusDotB;
+  function setStatus(ok) {
     if (ok) {
-      dot.classList.remove('error');
+      els.statusDot.classList.remove('error');
     } else {
-      dot.classList.add('error');
+      els.statusDot.classList.add('error');
     }
   }
 
-  function handleFailure(slot) {
-    if (slot === 'A') {
-      consecutiveFailuresA++;
-      if (consecutiveFailuresA >= MAX_FAILURES) {
-        els.availableA.textContent = '--';
-        els.totalA.textContent = '--';
-        lastDataA = null;
+  function handleFailure(lot) {
+    consecutiveFailures[lot]++;
+    if (consecutiveFailures[lot] >= MAX_FAILURES) {
+      lastData[lot] = null;
+      if (currentLot === lot) {
+        els.available.textContent = '--';
+        els.total.textContent = '--';
       }
-      setStatus('A', false);
-    } else {
-      consecutiveFailuresB++;
-      if (consecutiveFailuresB >= MAX_FAILURES) {
-        els.availableB.textContent = '--';
-        els.totalB.textContent = '--';
-        lastDataB = null;
-      }
-      setStatus('B', false);
     }
-  }
-
-  // --- Timer ---
-  function startTimer() {
-    stopTimer();
-    const ms = Math.max(1, config.updateInterval) * 1000;
-    timerId = setInterval(fetchData, ms);
-    console.log(`Polling every ${config.updateInterval}s`);
-  }
-
-  function stopTimer() {
-    if (timerId) {
-      clearInterval(timerId);
-      timerId = null;
+    if (currentLot === lot) {
+      setStatus(false);
     }
   }
 
@@ -229,8 +258,8 @@
       console.log('Config changed, reloading...');
       config = getConfig();
       applyConfig();
-      startTimer();
-      fetchData();
+      startRotation();              // restart timer with new interval
+      switchToLot(currentLot);      // re-apply current lot with new names
     }
   });
 
