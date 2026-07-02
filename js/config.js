@@ -5,22 +5,19 @@
 const STORAGE_KEY = 'parking_display_config';
 
 const DEFAULT_CONFIG = {
-  // A/B rotation interval in seconds (switches parking lot + refreshes data)
+  // A/B rotation interval in seconds (switches parking lot display)
   rotationInterval: 10,
 
   // Update interval in seconds (kept for backward compatibility)
   updateInterval: 10,
 
-  // API mode: 'separate' = two endpoints (apiUrlA / apiUrlB)
-  //           'combined' = one endpoint (combinedApiUrl) returns {a:{},b:{}}
-  apiMode: 'separate',
+  // Polling interval in seconds — how often the frontend fetches
+  // latest data from GET /api/parking/status
+  pollInterval: 2,
 
-  // Separate mode — each returns { total: number, available: number }
-  apiUrlA: '/api/parking/a',
-  apiUrlB: '/api/parking/b',
-
-  // Combined mode — returns { a: {total, available}, b: {total, available} }
-  combinedApiUrl: '/api/parking/all',
+  // ParkID mapping — matches --parkid-a / --parkid-b server args
+  parkIdA: '20210001',
+  parkIdB: '20210002',
 
   // Video stream URLs (iframe or HLS .m3u8) — one per parking lot
   videoUrlA: '',

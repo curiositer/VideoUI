@@ -7,30 +7,23 @@
 
   // --- Form field ↔ config key mapping ---
   const FIELD_MAP = [
-    { id: 'rotationInterval', key: 'rotationInterval', type: 'number' },
-    { id: 'apiMode',          key: 'apiMode',          type: 'value' },
-    { id: 'apiUrlA',          key: 'apiUrlA',          type: 'value' },
-    { id: 'apiUrlB',          key: 'apiUrlB',          type: 'value' },
-    { id: 'combinedApiUrl',   key: 'combinedApiUrl',   type: 'value' },
-    { id: 'videoUrlA',        key: 'videoUrlA',        type: 'value' },
-    { id: 'videoUrlB',        key: 'videoUrlB',        type: 'value' },
-    { id: 'videoType',        key: 'videoType',        type: 'value' },
-    { id: 'parkingNameA',     key: 'parkingNameA',     type: 'value' },
-    { id: 'parkingNameB',     key: 'parkingNameB',     type: 'value' },
+    { id: 'parkIdA',         key: 'parkIdA',         type: 'value' },
+    { id: 'parkIdB',         key: 'parkIdB',         type: 'value' },
+    { id: 'pollInterval',    key: 'pollInterval',    type: 'number' },
+    { id: 'rotationInterval',key: 'rotationInterval',type: 'number' },
+    { id: 'videoUrlA',       key: 'videoUrlA',       type: 'value' },
+    { id: 'videoUrlB',       key: 'videoUrlB',       type: 'value' },
+    { id: 'videoType',       key: 'videoType',       type: 'value' },
+    { id: 'parkingNameA',    key: 'parkingNameA',    type: 'value' },
+    { id: 'parkingNameB',    key: 'parkingNameB',    type: 'value' },
   ];
 
-  const apiModeSelect = document.getElementById('apiMode');
-  const separateFields = document.getElementById('separate-fields');
-  const combinedFields = document.getElementById('combined-fields');
   const toast = document.getElementById('toast');
 
   // --- Init: populate form from current config ---
   function init() {
     const config = getConfig();
     populateForm(config);
-    toggleApiMode();
-
-    apiModeSelect.addEventListener('change', toggleApiMode);
 
     document.getElementById('btn-save').addEventListener('click', onSave);
     document.getElementById('btn-reset').addEventListener('click', onReset);
@@ -54,7 +47,7 @@
       const el = document.getElementById(id);
       if (!el) return;
       if (type === 'number') {
-        config[key] = parseInt(el.value, 10) || 10;
+        config[key] = parseInt(el.value, 10) || 0;
       } else {
         config[key] = el.value;
       }
@@ -62,17 +55,6 @@
     // Keep updateInterval in sync for backward compatibility
     config.updateInterval = config.rotationInterval;
     return config;
-  }
-
-  function toggleApiMode() {
-    const mode = apiModeSelect.value;
-    if (mode === 'combined') {
-      separateFields.style.display = 'none';
-      combinedFields.style.display = 'block';
-    } else {
-      separateFields.style.display = 'block';
-      combinedFields.style.display = 'none';
-    }
   }
 
   function onSave() {
@@ -86,7 +68,6 @@
     resetConfig();
     const defaults = getConfig();
     populateForm(defaults);
-    toggleApiMode();
     showToast('已恢复默认配置');
   }
 

@@ -1,5 +1,5 @@
 /* ============================================================
-   Main Display Logic — rotation timer, data fetching, UI updates
+   Main Display Logic — polls local server, rotation timer, UI updates
    ============================================================ */
 
 (function () {
@@ -18,6 +18,7 @@
   // --- State ---
   let config;
   let currentLot = 'A';               // 'A' or 'B'
+  let pollTimerId = null;
   let rotationTimerId = null;
   let consecutiveFailures = { A: 0, B: 0 };
   let lastData = { A: null, B: null };
@@ -27,13 +28,13 @@
   function init() {
     config = getConfig();
     applyConfig();
-    switchToLot('A');                 // initial display + data fetch
-    startRotation();
+    switchToLot('A');                 // initial display
+    startPolling();                   // fetch data from local server
+    startRotation();                  // A/B switching
   }
 
   // --- Apply config to DOM ---
   function applyConfig() {
-    // Pre-load both video streams into DOM (only active panel is visible via CSS)
     setupVideo('a', config.videoUrlA);
     setupVideo('b', config.videoUrlB);
   }
@@ -63,12 +64,82 @@
       video.src = url;
       container.appendChild(video);
     } else {
-      // Default: iframe (IP camera web view)
       const iframe = document.createElement('iframe');
       iframe.src = url;
       iframe.allow = 'autoplay';
       iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
       container.appendChild(iframe);
+    }
+  }
+
+  // --- Data Polling (local server: GET /api/parking/status) ---
+  function startPolling() {
+    stopPolling();
+    const interval = Math.max(1, config.pollInterval || 2) * 1000;
+    pollTimerId = setInterval(fetchStatus, interval);
+    console.log(`Data polling every ${config.pollInterval || 2}s`);
+  }
+
+  function stopPolling() {
+    if (pollTimerId) {
+      clearInterval(pollTimerId);
+      pollTimerId = null;
+    }
+  }
+
+  async function fetchStatus() {
+    try {
+      const resp = await fetch('/api/parking/status');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      // Cache data for both lots
+      let anyUpdated = false;
+      ['A', 'B'].forEach(lot => {
+        const key = lot.toLowerCase();  // 'a' or 'b'
+        const entry = data[key];
+        if (entry && typeof entry.total === 'number' && typeof entry.available === 'number') {
+          lastData[lot] = entry;
+          consecutiveFailures[lot] = 0;
+          anyUpdated = true;
+        } else if (entry === null) {
+          // Server returned null = no data received yet for this lot
+          // Don't count as failure; just leave as-is
+        }
+      });
+
+      // Update UI for currently active lot if we have data
+      const active = lastData[currentLot];
+      if (active && typeof active.total === 'number') {
+        updateCardUI(active);
+        setStatus(true);
+      } else if (lastData[currentLot] === null && consecutiveFailures[currentLot] === 0) {
+        // No data ever received — show placeholder
+        els.available.textContent = '--';
+        els.total.textContent = '--';
+        setStatus(true);  // not an error, just no data yet
+      }
+
+      // If data came back after failures, reset status
+      if (consecutiveFailures[currentLot] >= MAX_FAILURES && active) {
+        consecutiveFailures[currentLot] = 0;
+        updateCardUI(active);
+        setStatus(true);
+      }
+
+    } catch (e) {
+      console.error('Status poll failed:', e);
+      ['A', 'B'].forEach(lot => {
+        consecutiveFailures[lot]++;
+        if (consecutiveFailures[lot] >= MAX_FAILURES) {
+          lastData[lot] = null;
+        }
+      });
+      if (consecutiveFailures[currentLot] >= MAX_FAILURES) {
+        els.available.textContent = '--';
+        els.total.textContent = '--';
+      }
+      setStatus(consecutiveFailures[currentLot] < MAX_FAILURES);
     }
   }
 
@@ -80,9 +151,10 @@
     els.videoA.classList.toggle('active', lot === 'A');
     els.videoB.classList.toggle('active', lot === 'B');
 
-    // Update card with cached data (or placeholder)
+    // Update card name
     els.name.textContent = lot === 'A' ? config.parkingNameA : config.parkingNameB;
 
+    // Update card data from cache
     const cached = lastData[lot];
     if (cached && typeof cached.available === 'number' && typeof cached.total === 'number') {
       updateCardUI(cached);
@@ -92,96 +164,22 @@
       els.total.textContent = '--';
       setStatus(consecutiveFailures[lot] < MAX_FAILURES);
     }
-
-    // Fetch fresh data for the newly active lot
-    fetchDataForLot(lot);
   }
 
   function startRotation() {
     stopRotation();
-    const interval = Math.max(1, config.rotationInterval || config.updateInterval || 10) * 1000;
+    const interval = Math.max(1, config.rotationInterval || 10) * 1000;
     rotationTimerId = setInterval(() => {
       const nextLot = currentLot === 'A' ? 'B' : 'A';
       switchToLot(nextLot);
     }, interval);
-    console.log(`A/B rotation every ${config.rotationInterval || config.updateInterval || 10}s`);
+    console.log(`A/B rotation every ${config.rotationInterval || 10}s`);
   }
 
   function stopRotation() {
     if (rotationTimerId) {
       clearInterval(rotationTimerId);
       rotationTimerId = null;
-    }
-  }
-
-  // --- Data Fetching ---
-  function fetchDataForLot(lot) {
-    if (config.apiMode === 'combined') {
-      fetchCombined();
-    } else {
-      fetchSingle(lot);
-    }
-  }
-
-  async function fetchCombined() {
-    try {
-      const resp = await fetch(config.combinedApiUrl, { signal: timeoutSignal(5000) });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-
-      // Cache both lots
-      if (data.a && typeof data.a.total === 'number') {
-        lastData.A = data.a;
-        consecutiveFailures.A = 0;
-      }
-      if (data.b && typeof data.b.total === 'number') {
-        lastData.B = data.b;
-        consecutiveFailures.B = 0;
-      }
-
-      // Update UI only for currently active lot
-      const activeData = data[currentLot.toLowerCase()];
-      if (activeData && typeof activeData.total === 'number') {
-        updateCardUI(activeData);
-        setStatus(true);
-      }
-    } catch (e) {
-      console.error('Combined fetch failed:', e);
-      handleFailure(currentLot);
-    }
-  }
-
-  async function fetchSingle(lot) {
-    const url = lot === 'A' ? config.apiUrlA : config.apiUrlB;
-    try {
-      const resp = await fetch(url, { signal: timeoutSignal(5000) });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-
-      if (!data || typeof data.total !== 'number' || typeof data.available !== 'number') {
-        throw new Error('Invalid data format');
-      }
-
-      // Cache this lot's data
-      lastData[lot] = data;
-      consecutiveFailures[lot] = 0;
-
-      // Only update UI if this lot is still active (stale response guard)
-      if (currentLot === lot) {
-        updateCardUI(data);
-        setStatus(true);
-      }
-    } catch (e) {
-      console.error(`Fetch ${lot} failed:`, e);
-      // Always track failure for the lot that was requested
-      consecutiveFailures[lot]++;
-      if (consecutiveFailures[lot] >= MAX_FAILURES) {
-        lastData[lot] = null;
-      }
-      // Only update UI if this lot is still active
-      if (currentLot === lot) {
-        handleFailure(lot);
-      }
     }
   }
 
@@ -231,26 +229,7 @@
     }
   }
 
-  function handleFailure(lot) {
-    consecutiveFailures[lot]++;
-    if (consecutiveFailures[lot] >= MAX_FAILURES) {
-      lastData[lot] = null;
-      if (currentLot === lot) {
-        els.available.textContent = '--';
-        els.total.textContent = '--';
-      }
-    }
-    if (currentLot === lot) {
-      setStatus(false);
-    }
-  }
-
   // --- Helpers ---
-  function timeoutSignal(ms) {
-    const ctrl = new AbortController();
-    setTimeout(() => ctrl.abort(), ms);
-    return ctrl.signal;
-  }
 
   // Reload config on storage change (from admin page in another tab)
   window.addEventListener('storage', (e) => {
@@ -258,7 +237,8 @@
       console.log('Config changed, reloading...');
       config = getConfig();
       applyConfig();
-      startRotation();              // restart timer with new interval
+      startPolling();               // restart poll timer with new interval
+      startRotation();              // restart rotation timer with new interval
       switchToLot(currentLot);      // re-apply current lot with new names
     }
   });
