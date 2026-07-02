@@ -7,15 +7,12 @@
 
   // --- Form field ↔ config key mapping ---
   const FIELD_MAP = [
-    { id: 'parkIdA',         key: 'parkIdA',         type: 'value' },
-    { id: 'parkIdB',         key: 'parkIdB',         type: 'value' },
-    { id: 'pollInterval',    key: 'pollInterval',    type: 'number' },
-    { id: 'rotationInterval',key: 'rotationInterval',type: 'number' },
-    { id: 'videoUrlA',       key: 'videoUrlA',       type: 'value' },
-    { id: 'videoUrlB',       key: 'videoUrlB',       type: 'value' },
-    { id: 'videoType',       key: 'videoType',       type: 'value' },
-    { id: 'parkingNameA',    key: 'parkingNameA',    type: 'value' },
-    { id: 'parkingNameB',    key: 'parkingNameB',    type: 'value' },
+    { id: 'parkingName',  key: 'parkingName',  type: 'value' },
+    { id: 'parkIdA',      key: 'parkIdA',      type: 'value' },
+    { id: 'parkIdB',      key: 'parkIdB',      type: 'value' },
+    { id: 'pollInterval', key: 'pollInterval', type: 'number' },
+    { id: 'videoUrl',     key: 'videoUrl',     type: 'value' },
+    { id: 'videoType',    key: 'videoType',    type: 'value' },
   ];
 
   const toast = document.getElementById('toast');
@@ -52,8 +49,6 @@
         config[key] = el.value;
       }
     });
-    // Keep updateInterval in sync for backward compatibility
-    config.updateInterval = config.rotationInterval;
     return config;
   }
 

@@ -5,30 +5,23 @@
 const STORAGE_KEY = 'parking_display_config';
 
 const DEFAULT_CONFIG = {
-  // A/B rotation interval in seconds (switches parking lot display)
-  rotationInterval: 10,
-
-  // Update interval in seconds (kept for backward compatibility)
-  updateInterval: 10,
-
   // Polling interval in seconds — how often the frontend fetches
   // latest data from GET /api/parking/status
   pollInterval: 2,
 
   // ParkID mapping — matches --parkid-a / --parkid-b server args
+  // parkIdA = parking lot (停车场), parkIdB = parking building (停车楼)
   parkIdA: '20210001',
   parkIdB: '20210002',
 
-  // Video stream URLs (iframe or HLS .m3u8) — one per parking lot
-  videoUrlA: '',
-  videoUrlB: '',
+  // Display name for the location (shown at top of card)
+  parkingName: 'xxxx景区游客中心停车场',
+
+  // Video stream URL (iframe or HLS .m3u8)
+  videoUrl: '',
 
   // Video embed type: 'iframe' or 'hls'
   videoType: 'iframe',
-
-  // Parking lot display names
-  parkingNameA: '停车场',
-  parkingNameB: '停车楼',
 };
 
 /**
@@ -40,12 +33,7 @@ function getConfig() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const stored = JSON.parse(raw);
-      const config = { ...DEFAULT_CONFIG, ...stored };
-      // Fallback: existing configs may lack rotationInterval
-      if (config.rotationInterval == null) {
-        config.rotationInterval = config.updateInterval || 10;
-      }
-      return config;
+      return { ...DEFAULT_CONFIG, ...stored };
     }
   } catch (e) {
     console.warn('Failed to read config from localStorage, using defaults.', e);

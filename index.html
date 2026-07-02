@@ -11,20 +11,10 @@
   <div id="app">
     <div id="container">
 
-      <!-- ====== Left 3/4: Video Area (stacked panels, only active one visible) ====== -->
+      <!-- ====== Left 3/4: Video Area ====== -->
       <div class="video-area">
-        <!-- Parking A video panel (visible initially) -->
-        <div class="video-panel active" id="video-a">
-          <div class="video-placeholder" id="placeholder-a">
-            <span class="icon">📡</span>
-            <span class="text">暂无信号</span>
-            <span class="sub">等待视频接入…</span>
-          </div>
-        </div>
-
-        <!-- Parking B video panel (hidden initially) -->
-        <div class="video-panel" id="video-b">
-          <div class="video-placeholder" id="placeholder-b">
+        <div class="video-panel active" id="video-panel">
+          <div class="video-placeholder" id="placeholder-video">
             <span class="icon">📡</span>
             <span class="text">暂无信号</span>
             <span class="sub">等待视频接入…</span>
@@ -32,23 +22,41 @@
         </div>
       </div>
 
-      <!-- ====== Right 1/4: Single Parking Info Card ====== -->
-      <div class="parking-card" id="card-current">
-        <span class="status-dot" id="status-dot-current" title="数据连接状态"></span>
+      <!-- ====== Right 1/4: Parking Info Card ====== -->
+      <div class="parking-card" id="card-info">
+        <span class="status-dot" id="status-dot" title="数据连接状态"></span>
         <div class="stats-stack">
-          <div class="stat-line name">
-            <span class="stat-value" id="name-current">加载中...</span>
+
+          <!-- Location name -->
+          <div class="stat-name" id="name">加载中...</div>
+
+          <!-- Total parking spaces (red) -->
+          <div class="stat-block total">
+            <div class="stat-label">总停车位</div>
+            <div class="stat-row">
+              <span class="stat-value" id="total-spaces">--</span>
+              <span class="stat-unit">个</span>
+            </div>
           </div>
-          <div class="stat-line available">
-            <span class="stat-label">空闲车位：</span>
-            <span class="stat-value" id="available-current">--</span>
-            <span class="stat-unit">个</span>
+
+          <!-- Parking lot available (green) -->
+          <div class="stat-block lot-avail">
+            <div class="stat-label">停车场空闲车位</div>
+            <div class="stat-row">
+              <span class="stat-value" id="avail-lot">--</span>
+              <span class="stat-unit">个</span>
+            </div>
           </div>
-          <div class="stat-line total">
-            <span class="stat-label">总车位：</span>
-            <span class="stat-value" id="total-current">--</span>
-            <span class="stat-unit">个</span>
+
+          <!-- Parking building available (green) -->
+          <div class="stat-block building-avail">
+            <div class="stat-label">停车楼空闲车位</div>
+            <div class="stat-row">
+              <span class="stat-value" id="avail-building">--</span>
+              <span class="stat-unit">个</span>
+            </div>
           </div>
+
         </div>
       </div>
 

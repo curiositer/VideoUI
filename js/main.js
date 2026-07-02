@@ -1,5 +1,5 @@
 /* ============================================================
-   Main Display Logic — polls local server, rotation timer, UI updates
+   Main Display Logic — polls local server, updates all fields
    ============================================================ */
 
 (function () {
@@ -7,41 +7,38 @@
 
   // --- DOM refs ---
   const els = {
-    name:       document.getElementById('name-current'),
-    available:  document.getElementById('available-current'),
-    total:      document.getElementById('total-current'),
-    statusDot:  document.getElementById('status-dot-current'),
-    videoA:     document.getElementById('video-a'),
-    videoB:     document.getElementById('video-b'),
+    name:          document.getElementById('name'),
+    totalSpaces:   document.getElementById('total-spaces'),
+    availLot:      document.getElementById('avail-lot'),
+    availBuilding: document.getElementById('avail-building'),
+    statusDot:     document.getElementById('status-dot'),
+    videoPanel:    document.getElementById('video-panel'),
   };
 
   // --- State ---
   let config;
-  let currentLot = 'A';               // 'A' or 'B'
   let pollTimerId = null;
-  let rotationTimerId = null;
-  let consecutiveFailures = { A: 0, B: 0 };
-  let lastData = { A: null, B: null };
+  let consecutiveFailures = 0;
+  let lastData = { total: null, availLot: null, availBuilding: null };
   const MAX_FAILURES = 3;
 
   // --- Init ---
   function init() {
     config = getConfig();
     applyConfig();
-    switchToLot('A');                 // initial display
-    startPolling();                   // fetch data from local server
-    startRotation();                  // A/B switching
+    fetchStatus();                    // immediate first fetch
+    startPolling();
   }
 
   // --- Apply config to DOM ---
   function applyConfig() {
-    setupVideo('a', config.videoUrlA);
-    setupVideo('b', config.videoUrlB);
+    setupVideo(config.videoUrl);
+    els.name.textContent = config.parkingName || '景区游客中心停车场';
   }
 
-  function setupVideo(slot, url) {
-    const container = document.getElementById('video-' + slot);
-    const placeholder = document.getElementById('placeholder-' + slot);
+  function setupVideo(url) {
+    const container = els.videoPanel;
+    const placeholder = document.getElementById('placeholder-video');
     if (!container) return;
 
     // Clear previous content except placeholder
@@ -93,129 +90,72 @@
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
 
-      // Cache data for both lots
-      let anyUpdated = false;
-      ['A', 'B'].forEach(lot => {
-        const key = lot.toLowerCase();  // 'a' or 'b'
-        const entry = data[key];
-        if (entry && typeof entry.total === 'number' && typeof entry.available === 'number') {
-          lastData[lot] = entry;
-          consecutiveFailures[lot] = 0;
-          anyUpdated = true;
-        } else if (entry === null) {
-          // Server returned null = no data received yet for this lot
-          // Don't count as failure; just leave as-is
-        }
-      });
+      const a = data.a;  // parking lot (停车场)
+      const b = data.b;  // parking building (停车楼)
 
-      // Update UI for currently active lot if we have data
-      const active = lastData[currentLot];
-      if (active && typeof active.total === 'number') {
-        updateCardUI(active);
-        setStatus(true);
-      } else if (lastData[currentLot] === null && consecutiveFailures[currentLot] === 0) {
-        // No data ever received — show placeholder
-        els.available.textContent = '--';
-        els.total.textContent = '--';
-        setStatus(true);  // not an error, just no data yet
-      }
+      // Compute combined values
+      const totalA = (a && typeof a.total === 'number') ? a.total : 0;
+      const totalB = (b && typeof b.total === 'number') ? b.total : 0;
+      const availA = (a && typeof a.available === 'number') ? a.available : null;
+      const availB = (b && typeof b.available === 'number') ? b.available : null;
 
-      // If data came back after failures, reset status
-      if (consecutiveFailures[currentLot] >= MAX_FAILURES && active) {
-        consecutiveFailures[currentLot] = 0;
-        updateCardUI(active);
+      const combined = {
+        total: totalA + totalB,
+        availLot: availA,
+        availBuilding: availB,
+      };
+
+      // Only count as valid if at least one lot has reported
+      const hasAnyData = (a !== null && a !== undefined) || (b !== null && b !== undefined);
+
+      if (hasAnyData) {
+        lastData = combined;
+        consecutiveFailures = 0;
+        updateCardUI(combined);
         setStatus(true);
       }
 
     } catch (e) {
       console.error('Status poll failed:', e);
-      ['A', 'B'].forEach(lot => {
-        consecutiveFailures[lot]++;
-        if (consecutiveFailures[lot] >= MAX_FAILURES) {
-          lastData[lot] = null;
-        }
-      });
-      if (consecutiveFailures[currentLot] >= MAX_FAILURES) {
-        els.available.textContent = '--';
-        els.total.textContent = '--';
+      consecutiveFailures++;
+      if (consecutiveFailures >= MAX_FAILURES) {
+        lastData = { total: null, availLot: null, availBuilding: null };
+        els.totalSpaces.textContent = '--';
+        els.availLot.textContent = '--';
+        els.availBuilding.textContent = '--';
       }
-      setStatus(consecutiveFailures[currentLot] < MAX_FAILURES);
-    }
-  }
-
-  // --- Rotation ---
-  function switchToLot(lot) {
-    currentLot = lot;
-
-    // Toggle video panel visibility
-    els.videoA.classList.toggle('active', lot === 'A');
-    els.videoB.classList.toggle('active', lot === 'B');
-
-    // Update card name
-    els.name.textContent = lot === 'A' ? config.parkingNameA : config.parkingNameB;
-
-    // Update card data from cache
-    const cached = lastData[lot];
-    if (cached && typeof cached.available === 'number' && typeof cached.total === 'number') {
-      updateCardUI(cached);
-      setStatus(consecutiveFailures[lot] < MAX_FAILURES);
-    } else {
-      els.available.textContent = '--';
-      els.total.textContent = '--';
-      setStatus(consecutiveFailures[lot] < MAX_FAILURES);
-    }
-  }
-
-  function startRotation() {
-    stopRotation();
-    const interval = Math.max(1, config.rotationInterval || 10) * 1000;
-    rotationTimerId = setInterval(() => {
-      const nextLot = currentLot === 'A' ? 'B' : 'A';
-      switchToLot(nextLot);
-    }, interval);
-    console.log(`A/B rotation every ${config.rotationInterval || 10}s`);
-  }
-
-  function stopRotation() {
-    if (rotationTimerId) {
-      clearInterval(rotationTimerId);
-      rotationTimerId = null;
+      setStatus(false);
     }
   }
 
   // --- UI Updates ---
   function updateCardUI(data) {
-    if (!data || typeof data.total !== 'number' || typeof data.available !== 'number') {
-      console.warn('Invalid data:', data);
-      return;
+    // Total spaces (red)
+    if (data.total !== null && data.total !== undefined) {
+      updateValue(els.totalSpaces, data.total);
     }
 
-    const oldAvailable = parseInt(els.available.textContent, 10);
-    const oldTotal = parseInt(els.total.textContent, 10);
-
-    if (!isNaN(oldAvailable) && oldAvailable !== data.available) {
-      animateNumber(els.available, data.available);
-    } else {
-      els.available.textContent = data.available;
+    // Parking lot available (green)
+    if (data.availLot !== null && data.availLot !== undefined) {
+      updateValue(els.availLot, data.availLot);
     }
 
-    if (!isNaN(oldTotal) && oldTotal !== data.total) {
-      animateNumber(els.total, data.total);
+    // Parking building available (green)
+    if (data.availBuilding !== null && data.availBuilding !== undefined) {
+      updateValue(els.availBuilding, data.availBuilding);
+    }
+  }
+
+  function updateValue(el, newVal) {
+    const oldVal = parseInt(el.textContent, 10);
+    if (!isNaN(oldVal) && oldVal !== newVal) {
+      animateNumber(el, newVal);
     } else {
-      els.total.textContent = data.total;
+      el.textContent = newVal;
     }
   }
 
   function animateNumber(el, newVal) {
-    const oldText = el.textContent;
-    const oldVal = parseInt(oldText, 10);
-
-    if (isNaN(oldVal) || oldVal === newVal) {
-      el.textContent = newVal;
-      return;
-    }
-
-    // Brief "pulse" animation via class
     el.classList.add('updating');
     el.textContent = newVal;
     setTimeout(() => el.classList.remove('updating'), 600);
@@ -238,8 +178,7 @@
       config = getConfig();
       applyConfig();
       startPolling();               // restart poll timer with new interval
-      startRotation();              // restart rotation timer with new interval
-      switchToLot(currentLot);      // re-apply current lot with new names
+      fetchStatus();                // immediate refresh
     }
   });
 

@@ -14,37 +14,41 @@
     <h1>⚙ 大屏配置</h1>
     <p class="subtitle">修改配置后点击保存，返回大屏页面刷新即可生效</p>
 
+    <!-- === Display === -->
+    <div class="form-section">
+      <h2>显示设置</h2>
+      <div class="form-group">
+        <label for="parkingName">景区名称</label>
+        <input type="text" id="parkingName" placeholder="xxxx景区游客中心停车场">
+        <span class="hint">大屏顶部显示的停车场名称</span>
+      </div>
+    </div>
+
     <!-- === ParkID Mapping === -->
     <div class="form-section">
       <h2>车场标识</h2>
 
       <div class="form-group">
-        <label for="parkIdA">A 车场 ParkID</label>
+        <label for="parkIdA">停车场 ParkID</label>
         <input type="text" id="parkIdA" placeholder="20210001">
         <span class="hint">停车场客户端 POST 上报时携带的 parkid，需与 server.py 启动参数 --parkid-a 一致</span>
       </div>
 
       <div class="form-group">
-        <label for="parkIdB">B 车场 ParkID</label>
+        <label for="parkIdB">停车楼 ParkID</label>
         <input type="text" id="parkIdB" placeholder="20210002">
         <span class="hint">停车楼客户端 POST 上报时携带的 parkid，需与 server.py 启动参数 --parkid-b 一致</span>
       </div>
     </div>
 
-    <!-- === Timing === -->
+    <!-- === Polling === -->
     <div class="form-section">
-      <h2>刷新与轮换</h2>
+      <h2>数据刷新</h2>
 
       <div class="form-group">
         <label for="pollInterval">数据刷新间隔（秒）</label>
         <input type="number" id="pollInterval" min="1" max="60" value="2">
         <span class="hint">前端轮询本地服务端 GET /api/parking/status 的频率，默认 2 秒</span>
-      </div>
-
-      <div class="form-group">
-        <label for="rotationInterval">A/B 切换间隔（秒）</label>
-        <input type="number" id="rotationInterval" min="1" max="3600" value="10">
-        <span class="hint">两个车场自动轮换显示的间隔，默认 10 秒</span>
       </div>
     </div>
 
@@ -61,28 +65,9 @@
       </div>
 
       <div class="form-group">
-        <label for="videoUrlA">A 车场监控画面 URL</label>
-        <input type="text" id="videoUrlA" placeholder="https://... 或 http://...">
-        <span class="hint">IP 摄像头网页地址或 .m3u8 流地址，切换至该车场时显示</span>
-      </div>
-
-      <div class="form-group">
-        <label for="videoUrlB">B 车场监控画面 URL</label>
-        <input type="text" id="videoUrlB" placeholder="https://... 或 http://...">
-        <span class="hint">IP 摄像头网页地址或 .m3u8 流地址，切换至该车场时显示</span>
-      </div>
-    </div>
-
-    <!-- === Display === -->
-    <div class="form-section">
-      <h2>显示设置</h2>
-      <div class="form-group">
-        <label for="parkingNameA">A 车场显示名称</label>
-        <input type="text" id="parkingNameA" placeholder="A 停车场">
-      </div>
-      <div class="form-group">
-        <label for="parkingNameB">B 车场显示名称</label>
-        <input type="text" id="parkingNameB" placeholder="B 停车场">
+        <label for="videoUrl">监控画面 URL</label>
+        <input type="text" id="videoUrl" placeholder="https://... 或 http://...">
+        <span class="hint">IP 摄像头网页地址或 .m3u8 流地址</span>
       </div>
     </div>
 
