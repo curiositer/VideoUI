@@ -17,15 +17,18 @@ const DEFAULT_CONFIG = {
   // Display name for the location (shown at top of card)
   parkingName: 'xxxx景区游客中心停车场',
 
-  // Video stream URL (iframe or HLS .m3u8)
-  videoUrl: '',
+  // Video streams — array of {url, type, label}
+  // type: 'iframe' or 'hls', label: shown in top-left overlay
+  videoStreams: [],
 
-  // Video embed type: 'iframe' or 'hls'
-  videoType: 'iframe',
+  // How many seconds to show each video stream before switching to the next
+  // Only applies when there are 2+ streams configured
+  videoSwitchInterval: 10,
 };
 
 /**
  * Read config from localStorage, filling missing keys with defaults.
+ * Migrates legacy single-video config to videoStreams array automatically.
  * @returns {object}
  */
 function getConfig() {
@@ -33,6 +36,19 @@ function getConfig() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const stored = JSON.parse(raw);
+
+      // Migrate old single-video config to videoStreams array
+      if ((!stored.videoStreams || stored.videoStreams.length === 0) && stored.videoUrl) {
+        stored.videoStreams = [{
+          url: stored.videoUrl,
+          type: stored.videoType || 'iframe',
+          label: '监控画面',
+        }];
+        // Clean up old keys so they don't stick around
+        delete stored.videoUrl;
+        delete stored.videoType;
+      }
+
       return { ...DEFAULT_CONFIG, ...stored };
     }
   } catch (e) {

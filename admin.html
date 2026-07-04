@@ -52,23 +52,23 @@
       </div>
     </div>
 
-    <!-- === Video === -->
+    <!-- === Video Streams === -->
     <div class="form-section">
       <h2>监控画面</h2>
 
       <div class="form-group">
-        <label for="videoType">视频嵌入方式</label>
-        <select id="videoType">
-          <option value="iframe">iframe（IP 摄像头网页）</option>
-          <option value="hls">HLS 视频流（.m3u8）</option>
-        </select>
+        <label for="videoSwitchInterval">画面切换间隔（秒）</label>
+        <input type="number" id="videoSwitchInterval" min="1" max="120" value="10">
+        <span class="hint">多路监控画面轮播切换间隔，默认 10 秒</span>
       </div>
 
-      <div class="form-group">
-        <label for="videoUrl">监控画面 URL</label>
-        <input type="text" id="videoUrl" placeholder="https://... 或 http://...">
-        <span class="hint">IP 摄像头网页地址或 .m3u8 流地址</span>
+      <div id="video-streams-list">
+        <!-- Stream rows rendered dynamically by admin.js -->
       </div>
+
+      <button class="btn-add-stream" id="btn-add-stream" type="button">
+        ＋ 添加监控画面
+      </button>
     </div>
 
     <!-- === Actions === -->
