@@ -1,0 +1,36 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ===== Virtual Environment =====
+.venv/
+venv/
+env/
+
+# ===== IDE & Editor =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== OS Files =====
+Thumbs.db
+.DS_Store
+Desktop.ini
+
+# ===== Logs =====
+*.log
+
+# ===== uv / pip =====
+# uv.lock — committed for reproducibility (uncomment to ignore)
+# uv.lock
+
+# ===== Project Specific =====
+# Server runtime output
+server.log
