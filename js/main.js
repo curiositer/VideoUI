@@ -50,8 +50,12 @@
     if (!area) return;
 
     // Remove existing panels (keep placeholder)
+    // Destroy flv.js players first
     var existing = area.querySelectorAll('.video-panel');
     for (var i = 0; i < existing.length; i++) {
+      if (existing[i]._flvPlayer) {
+        try { existing[i]._flvPlayer.destroy(); } catch (e) { /* ignore */ }
+      }
       existing[i].remove();
     }
 
@@ -79,14 +83,42 @@
 
       // Embed video / iframe
       var isHls = stream.type === 'hls' || (stream.url && stream.url.indexOf('.m3u8') !== -1);
-      if (isHls) {
-        var video = document.createElement('video');
-        video.autoplay = true;
-        video.muted = true;
-        video.loop = true;
-        video.playsInline = true;
-        video.src = stream.url;
-        panel.appendChild(video);
+      var isFlv = stream.type === 'flv';
+
+      if (isFlv) {
+        // HTTP-FLV: use flv.js + <video> (MSE hardware decoding)
+        var flvVideo = document.createElement('video');
+        flvVideo.autoplay = true;
+        flvVideo.muted = true;
+        flvVideo.loop = true;
+        flvVideo.playsInline = true;
+        panel.appendChild(flvVideo);
+
+        try {
+          var player = flvjs.createPlayer({
+            type: 'flv',
+            url: stream.url,
+            isLive: true,
+          });
+          player.attachMediaElement(flvVideo);
+          player.load();
+          // Store player reference for cleanup
+          panel._flvPlayer = player;
+        } catch (e) {
+          console.error('flv.js player init failed for', stream.url, e);
+          var errOverlay = document.createElement('div');
+          errOverlay.className = 'error-overlay visible';
+          errOverlay.textContent = 'FLV 流加载失败：' + (e.message || '未知错误');
+          panel.appendChild(errOverlay);
+        }
+      } else if (isHls) {
+        var hlsVideo = document.createElement('video');
+        hlsVideo.autoplay = true;
+        hlsVideo.muted = true;
+        hlsVideo.loop = true;
+        hlsVideo.playsInline = true;
+        hlsVideo.src = stream.url;
+        panel.appendChild(hlsVideo);
       } else {
         var iframe = document.createElement('iframe');
         iframe.src = stream.url;

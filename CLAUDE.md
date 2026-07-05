@@ -12,6 +12,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # 启动服务端（接收停车场 POST + 托管静态文件）
 python server.py --port 8080 --parkid-a 20210001 --parkid-b 20210002
 
+# 启动 MediaMTX（RTSP → HTTP-FLV / HLS 桥接）
+./mediamtx                                    # Windows: mediamtx.exe
+# 配置文件: mediamtx.yml（从 mediamtx.yml.example 复制修改）
+
 # 模拟停车场上报
 curl -X POST http://localhost:8080/api/parkingspace \
   -H "Content-Type: application/json" \
@@ -24,16 +28,21 @@ curl -X POST http://localhost:8080/api/parkingspace \
 
 ```
 停车场客户端 → POST /api/parkingspace → server.py (内存存储) ← GET /api/parking/status ← 前端轮询
+
+RTSP 摄像头 → MediaMTX (单进程) → HTTP-FLV (http://host:8887/path) → flv.js → MSE → <video> GPU硬解
+                                 → HLS 备选 (http://host:8888/path/index.m3u8)
 ```
 
 ```
-server.py           → HTTP 服务端：接收 POST、提供 GET、托管静态文件
-index.html          → 主展示页：左 3/4 视频 + 右 1/4 车位卡片（四行信息）
-admin.html          → 配置管理页：所有设置写入 localStorage
-css/style.css       → 全局样式：9:4 自适应容器、卡片、视频面板、管理页表单
-js/config.js        → 配置读写模块：getConfig() / saveConfig() / resetConfig()
-js/main.js          → 主屏逻辑：轮询 GET /api/parking/status、数字动画、错误降级
-js/admin.js         → 管理页表单：加载当前配置、保存、重置
+server.py               → HTTP 服务端：接收 POST、提供 GET、托管静态文件
+index.html              → 主展示页：左 3/4 视频 + 右 1/4 车位卡片（四行信息）
+admin.html              → 配置管理页：所有设置写入 localStorage
+css/style.css           → 全局样式：9:4 自适应容器、卡片、视频面板、管理页表单
+js/config.js            → 配置读写模块：getConfig() / saveConfig() / resetConfig()
+js/main.js              → 主屏逻辑：轮询 GET /api/parking/status、数字动画、错误降级
+js/admin.js             → 管理页表单：加载当前配置、保存、重置
+js/flv.min.js           → flv.js 库：浏览器端 MSE 解码 HTTP-FLV，用于 RTSP 摄像头播放
+mediamtx.yml.example    → MediaMTX 配置模板，供用户参考
 ```
 
 ### 卡片展示内容（右侧 1/4）
@@ -73,3 +82,41 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 - 单次失败保留上次有效值
 - 连续 3 次失败 → 显示 "--"，状态指示点变红
 - 恢复后自动切回正常显示
+
+### 视频流类型 (videoStreams.type)
+
+| 类型 | 说明 | URL 格式 | 依赖 |
+|------|------|----------|------|
+| `flv` | HTTP-FLV 视频流（推荐），flv.js + MSE 硬解 H.264 | `http://host:8887/path` | MediaMTX |
+| `hls` | HLS 视频流，浏览器原生 `<video>` 播放 | `http://.../xxx.m3u8` | MediaMTX |
+| `iframe` | 嵌入 IP 摄像头网页（通过 iframe） | `http://...` | 无 |
+
+### RTSP 摄像头接入流程（推荐 flv.js + MediaMTX）
+
+1. 下载 MediaMTX: https://github.com/bluenviron/mediamtx/releases
+2. 将 `mediamtx.yml.example` 复制为 `mediamtx.yml`，修改 RTSP 地址和账号密码
+3. 启动 MediaMTX:
+   ```bash
+   # Linux/macOS
+   ./mediamtx
+   # Windows
+   mediamtx.exe
+   ```
+4. MediaMTX 默认端口:
+   - HTTP-FLV: `http://localhost:8887/<path>`（前端 flv 类型使用）
+   - HLS: `http://localhost:8888/<path>/index.m3u8`（前端 hls 类型备用）
+5. 在 admin.html 中添加监控画面:
+   - 视频类型选 **FLV**
+   - 视频地址填 `http://mediamtx主机:8887/<path>`
+   - 例如: `http://localhost:8887/entrance`
+
+> **原理**: 浏览器无法直接播放 RTSP。MediaMTX 接收 RTSP 流并以 HTTP-FLV 格式转发，前端 flv.js 通过 MSE（Media Source Extensions）将 H.264 码流喂给浏览器 `<video>` 标签的硬件解码器，零画质损失、CPU 占用极低。
+
+### 常见摄像头 RTSP URL 格式
+
+| 品牌 | RTSP 地址格式 |
+|------|-------------|
+| 海康威视 | `rtsp://username:password@ip:554/Streaming/Channels/101` |
+| 大华 | `rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=0` |
+| 宇视 | `rtsp://username:password@ip:554/media/video1` |
+| 通用 ONVIF | `rtsp://username:password@ip:554/onvif1` |

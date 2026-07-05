@@ -18,7 +18,8 @@ const DEFAULT_CONFIG = {
   parkingName: 'xxxx景区游客中心停车场',
 
   // Video streams — array of {url, type, label}
-  // type: 'iframe' or 'hls', label: shown in top-left overlay
+  // type: 'iframe' (IP摄像机网页), 'hls' (.m3u8流), 'flv' (HTTP-FLV流，推荐)
+  // label: shown in top-left overlay
   videoStreams: [],
 
   // How many seconds to show each video stream before switching to the next

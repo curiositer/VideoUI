@@ -92,11 +92,15 @@
       '如：停车场入口 / 停车楼一层');
     // Type field
     var grpType = createSelectGroup('视频类型', 'stream-type-' + idx,
-      [{ value: 'iframe', text: 'iframe（IP 摄像头网页）' }, { value: 'hls', text: 'HLS 视频流（.m3u8）' }],
+      [
+	        { value: 'iframe', text: 'iframe（IP 摄像头网页）' },
+	        { value: 'hls', text: 'HLS 视频流（.m3u8）' },
+	        { value: 'flv', text: 'HTTP-FLV 视频流（推荐，需 MediaMTX）' },
+	      ],
       stream.type);
     // URL field
     var grpUrl = createFieldGroup('视频地址', 'text', 'stream-url-' + idx, stream.url,
-      'IP 摄像头网页地址或 .m3u8 流地址');
+      'iframe：IP 摄像头网页地址 | HLS：.m3u8 流地址 | FLV：HTTP-FLV 地址（http://host:8887/path）');
 
     row.appendChild(header);
     row.appendChild(grpLabel);

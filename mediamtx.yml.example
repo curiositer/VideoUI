@@ -1,0 +1,65 @@
+# ============================================================================
+# MediaMTX 配置模板 — RTSP → HTTP-FLV / HLS 桥接
+# ============================================================================
+# 用法:
+#   1. 下载 MediaMTX: https://github.com/bluenviron/mediamtx/releases
+#   2. 复制本文件为 mediamtx.yml
+#   3. 修改下方 paths 中的 RTSP 地址和账号密码
+#   4. 启动: ./mediamtx
+#
+# 前端访问:
+#   HTTP-FLV (推荐): http://localhost:8887/<path>
+#   HLS (备选):      http://localhost:8888/<path>/index.m3u8
+#   WebRTC (可选):   http://localhost:8889/<path>/whep
+# ============================================================================
+
+# --- 日志设置 ---
+logLevel: info
+
+# --- API 开关 (如需动态添加/删除路径，启用 API) ---
+api: no
+
+# --- RTSP 服务器 (接收推流，本场景不需要) ---
+rtsp: no
+
+# --- RTMP 服务器 (不需要) ---
+rtmp: no
+
+# --- HLS 服务器 (备选方案) ---
+hls: yes
+hlsAddress: :8888
+
+# --- WebRTC 服务器 (可选，如需超低延迟) ---
+webrtc: no
+
+# --- 摄像头路径配置 ---
+paths:
+  # 示例 1: 停车场入口摄像头
+  entrance:
+    source: rtsp://admin:password@192.168.1.100:554/h264/ch1/main/av_stream
+    # 海康威视典型格式: rtsp://username:password@ip:554/Streaming/Channels/101
+    # 大华典型格式:     rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=0
+
+  # 示例 2: 停车场出口摄像头
+  exit:
+    source: rtsp://admin:password@192.168.1.101:554/h264/ch1/main/av_stream
+
+  # 示例 3: 停车场一层
+  lot_1f:
+    source: rtsp://admin:password@192.168.1.102:554/h264/ch1/main/av_stream
+
+  # 示例 4: 停车楼入口
+  building_entrance:
+    source: rtsp://admin:password@192.168.1.103:554/h264/ch1/main/av_stream
+
+  # ========== 常见摄像头 RTSP URL 格式参考 ==========
+  # 海康威视:
+  #   主码流:   rtsp://username:password@ip:554/Streaming/Channels/101
+  #   子码流:   rtsp://username:password@ip:554/Streaming/Channels/102
+  # 大华:
+  #   主码流:   rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=0
+  #   子码流:   rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=1
+  # 宇视:
+  #   rtsp://username:password@ip:554/media/video1
+  # 通用 ONVIF:
+  #   rtsp://username:password@ip:554/onvif1
