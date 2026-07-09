@@ -10,38 +10,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # 启动服务端（接收停车场 POST + 托管静态文件）
-python server.py --port 8080 --parkid-a 20210001 --parkid-b 20210002
+python server.py --port 3000 --parkid-a 20210001 --parkid-b 20210002
 
-# 启动 MediaMTX（RTSP → HTTP-FLV / HLS 桥接）
+# 启动 MediaMTX（RTSP → HLS / HTTP-FLV 桥接）
 ./mediamtx                                    # Windows: mediamtx.exe
 # 配置文件: mediamtx.yml（从 mediamtx.yml.example 复制修改）
 
+# 启动 Nginx（反向代理，统一入口 :80）
+nginx                                         # Windows: nginx.exe
+# 配置文件: 将项目 nginx.conf 复制到 Nginx 安装目录 conf/ 下
+
+# 注册 Windows 服务（开机自启 + 崩溃重启，管理员权限）
+nssm install MediaMTX D:\mediamtx\mediamtx.exe
+nssm install ParkingServer python "D:\AI\VideoUI\server.py --port 3000 --parkid-a 20210001 --parkid-b 20210002"
+nssm install ParkingNginx D:\nginx\nginx.exe
+# 详细步骤见 deploy.md
+
 # 模拟停车场上报
-curl -X POST http://localhost:8080/api/parkingspace \
+curl -X POST http://localhost:3000/api/parkingspace \
   -H "Content-Type: application/json" \
   -d '{"service":"parkingspace","parkid":"20210001","spacetotal":1000,"spaceLeft":978,"spaceused":22,"time":"2021-02-01 18:24:25","remark":""}'
 ```
 
-浏览器打开 `http://localhost:8080` 查看大屏，`http://localhost:8080/admin.html` 进入配置管理。
+浏览器打开 `http://localhost`（通过 Nginx 统一入口）查看大屏，`http://localhost:3000/admin.html` 进入配置管理。
 
 ## 架构
 
 ```
+海康摄像头 ──RTSP──→ MediaMTX (单进程) ──HLS──→ Nginx :80 (反向代理) ──→ Chrome 全屏
+ rtsp://ip:port            :8888 / :8887        统一入口消除跨域            kiosk 模式
+ /Streaming/Channels/101                           ├─ /       → Python :3000 (页面+API)
+                                                   ├─ /hls/   → HLS 视频流
+                                                   ├─ /flv/   → FLV 视频流
+                                                   └─ /videos/→ 本地 MP4 文件
+
 停车场客户端 → POST /api/parkingspace → server.py (内存存储) ← GET /api/parking/status ← 前端轮询
-
-RTSP 摄像头 → MediaMTX (单进程) → HTTP-FLV (http://host:8887/path) → flv.js → MSE → <video> GPU硬解
-                                 → HLS 备选 (http://host:8888/path/index.m3u8)
 ```
 
+部署运维详见 `deploy.md`。
+
 ```
-server.py               → HTTP 服务端：接收 POST、提供 GET、托管静态文件
+server.py               → HTTP 服务端：接收 POST、提供 GET、托管静态文件（默认端口 3000）
 index.html              → 主展示页：左 3/4 视频 + 右 1/4 车位卡片（四行信息）
 admin.html              → 配置管理页：所有设置写入 localStorage
+nginx.conf              → Nginx 反向代理配置：统一入口 :80，消除跨域
+deploy.md               → 部署运维手册：服务注册、开机自启、故障恢复
 css/style.css           → 全局样式：9:4 自适应容器、卡片、视频面板、管理页表单
 js/config.js            → 配置读写模块：getConfig() / saveConfig() / resetConfig()
-js/main.js              → 主屏逻辑：轮询 GET /api/parking/status、数字动画、错误降级
+js/main.js              → 主屏逻辑：轮询 GET /api/parking/status、数字动画、错误降级、视频播放
 js/admin.js             → 管理页表单：加载当前配置、保存、重置
-js/flv.min.js           → flv.js 库：浏览器端 MSE 解码 HTTP-FLV，用于 RTSP 摄像头播放
+js/hls.min.js           → hls.js 库：浏览器端解码 HLS 流
+js/flv.min.js           → flv.js 库：浏览器端 MSE 解码 HTTP-FLV
 mediamtx.yml.example    → MediaMTX 配置模板，供用户参考
 ```
 
@@ -87,11 +106,14 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 
 | 类型 | 说明 | URL 格式 | 依赖 |
 |------|------|----------|------|
-| `flv` | HTTP-FLV 视频流（推荐），flv.js + MSE 硬解 H.264 | `http://host:8887/path` | MediaMTX |
-| `hls` | HLS 视频流，浏览器原生 `<video>` 播放 | `http://.../xxx.m3u8` | MediaMTX |
-| `iframe` | 嵌入 IP 摄像头网页（通过 iframe） | `http://...` | 无 |
+| `hls` | HLS 视频流（推荐），hls.js 解码（Chrome/Edge），Safari 原生支持 | `/hls/<path>/index.m3u8` | MediaMTX + Nginx |
+| `flv` | HTTP-FLV 视频流，flv.js + MSE 硬解 H.264 | `/flv/<path>` | MediaMTX + Nginx |
+| `local` | 本地视频文件（MP4/WebM），原生 &lt;video&gt; 播放 | `/videos/<filename>` | Nginx 静态文件 |
+| `iframe` | 嵌入 IP 摄像头网页（通过 iframe） | 完整 HTTP URL | 无 |
 
-### RTSP 摄像头接入流程（推荐 flv.js + MediaMTX）
+> 使用 Nginx 反向代理后，hls/flv/local 类型均使用**相对路径**（`/hls/...`、`/flv/...`、`/videos/...`），不写 `localhost:8888`，以消除跨域。
+
+### RTSP 摄像头接入流程（推荐 hls.js + MediaMTX HLS）
 
 1. 下载 MediaMTX: https://github.com/bluenviron/mediamtx/releases
 2. 将 `mediamtx.yml.example` 复制为 `mediamtx.yml`，修改 RTSP 地址和账号密码
@@ -103,14 +125,15 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
    mediamtx.exe
    ```
 4. MediaMTX 默认端口:
-   - HTTP-FLV: `http://localhost:8887/<path>`（前端 flv 类型使用）
-   - HLS: `http://localhost:8888/<path>/index.m3u8`（前端 hls 类型备用）
-5. 在 admin.html 中添加监控画面:
-   - 视频类型选 **FLV**
-   - 视频地址填 `http://mediamtx主机:8887/<path>`
-   - 例如: `http://localhost:8887/entrance`
+   - HLS: `http://localhost:8888/<path>/index.m3u8`（前端 hls 类型使用，Chrome/Edge 通过 hls.js 播放）
+   - HTTP-FLV: `http://localhost:8887/<path>`（新版 MediaMTX 支持，前端 flv 类型使用）
+5. 启动 Nginx 反向代理（统一入口 :80），配置见 `nginx.conf`
+6. 在 admin.html 中添加监控画面:
+   - 视频类型选 **HLS**
+   - 视频地址填 `/hls/<path>/index.m3u8`（相对路径，经 Nginx 代理）
+   - 例如: `/hls/entrance/index.m3u8`
 
-> **原理**: 浏览器无法直接播放 RTSP。MediaMTX 接收 RTSP 流并以 HTTP-FLV 格式转发，前端 flv.js 通过 MSE（Media Source Extensions）将 H.264 码流喂给浏览器 `<video>` 标签的硬件解码器，零画质损失、CPU 占用极低。
+> **原理**: 浏览器无法直接播放 RTSP。MediaMTX 接收 RTSP 流并以 HLS 格式转发，Nginx 反向代理统一到 :80，前端 hls.js 将 HLS 切片解码后喂给浏览器 `<video>` 标签。Chrome/Edge 通过 hls.js 播放，Safari 原生支持 HLS。所有资源同源，无跨域问题。
 
 ### 常见摄像头 RTSP URL 格式
 

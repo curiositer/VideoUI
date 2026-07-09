@@ -27,14 +27,18 @@
 ## 架构
 
 ```
+RTSP 摄像头 → MediaMTX → HLS (端口 8888) → hls.js → Chrome/Edge <video> 播放
 停车场客户端 → POST /api/parkingspace → server.py (内存) ← GET /api/parking/status ← 前端(poll)
 ```
 
+- **MediaMTX**：将 RTSP 视频流实时转为 HLS 格式，供浏览器播放（单进程，Windows 免安装）
 - **server.py**：Python 内置模块实现的 HTTP 服务端，零外部依赖
   - 接收停车场客户端 POST 上报的车位数据
   - 按 parkid 分别存储，供前端轮询
   - 同时托管静态文件（index.html / admin.html / css / js）
 - **前端**：纯静态页面，每 N 秒轮询本地服务端获取最新数据，同时展示停车场 + 停车楼信息
+  - hls.js 库负责在 Chrome/Edge 上解码 HLS 视频流
+  - flv.js 库备用（需新版 MediaMTX 支持 HTTP-FLV）
 - 停车场客户端在车位变动时主动 POST，无需前端配置外部 API 地址
 
 ## 本地部署
@@ -54,6 +58,122 @@ python server.py --port 8080 --parkid-a 20210001 --parkid-b 20210002
 浏览器打开：
 - 大屏展示页：`http://localhost:8080`
 - 配置管理页：`http://localhost:8080/admin.html`
+
+## RTSP 视频流转换（MediaMTX）
+
+浏览器无法直接播放 RTSP 视频流。使用 **MediaMTX** 将 RTSP 转为 HLS 格式，前端通过 **hls.js** 在 Chrome/Edge 上播放。
+
+### 架构
+
+```
+RTSP 摄像头 → MediaMTX → HLS (http://localhost:8888/<path>/index.m3u8) → hls.js → Chrome/Edge <video>
+```
+
+### 1. 下载 MediaMTX
+
+从 [MediaMTX Releases](https://github.com/bluenviron/mediamtx/releases) 下载 Windows 版本（`mediamtx_vX.X.X_windows_amd64.zip`），解压到项目目录（与 `server.py` 同级）。
+
+### 2. 配置 MediaMTX
+
+将仓库中的 `mediamtx.yml.example` 复制为 `mediamtx.yml`，修改以下部分：
+
+```yaml
+# 日志级别
+logLevel: info
+
+# 关闭不需要的协议（本项目只用到 HLS）
+api: no
+rtsp: no
+rtmp: no
+webrtc: no
+
+# HLS 服务器（前端通过 hls.js 播放）
+hls: yes
+hlsAddress: :8888
+
+# 摄像头路径配置
+paths:
+  entrance:                          # 路径名，决定 HLS 地址的 /<path> 部分
+    source: rtsp://127.0.0.1:8554/video   # RTSP 流地址
+  # 可添加多个摄像头
+  # exit:
+  #   source: rtsp://192.168.1.100:554/Streaming/Channels/101
+```
+
+**常见摄像头 RTSP URL 格式：**
+
+| 品牌 | RTSP 地址格式 |
+|------|-------------|
+| 海康威视 | `rtsp://username:password@ip:554/Streaming/Channels/101` |
+| 大华 | `rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=0` |
+| 宇视 | `rtsp://username:password@ip:554/media/video1` |
+| 通用 ONVIF | `rtsp://username:password@ip:554/onvif1` |
+| VLC 模拟流 | `rtsp://127.0.0.1:8554/video` |
+
+### 3. 启动 MediaMTX
+
+```powershell
+# 在项目目录下，双击运行或命令行启动
+.\mediamtx.exe
+```
+
+启动成功后终端日志应显示：
+```
+[path entrance] [RTSP source] started
+[path entrance] [RTSP source] ready
+[path entrance] stream is available and online, 2 tracks (MPEG-1/2 Audio, H264)
+```
+
+此时 HLS 流地址为：`http://localhost:8888/entrance/index.m3u8`
+
+> **注意**：`entrance` 对应配置文件中 `paths:` 下的键名。如果你用了其他路径名（如 `video`），HLS 地址也相应变为 `http://localhost:8888/video/index.m3u8`。
+
+### 4. 在前端配置视频流
+
+1. 打开 `http://localhost:8080/admin.html`
+2. 在"监控画面"区域点击"添加监控画面"
+3. 视频类型选择 **HLS**
+4. 视频地址填入 `http://localhost:8888/entrance/index.m3u8`（按实际路径名修改）
+5. 画面名称填写描述文字（如"停车场入口"）
+6. 点击"保存配置"
+
+刷新 `http://localhost:8080` 即可看到视频。
+
+### 5. MediaMTX 开机自启
+
+MediaMTX 需要和 `server.py` 一起开机启动。推荐使用**任务计划程序**：
+
+1. 打开任务计划程序（`Win + R` → `taskschd.msc`）
+2. 创建任务：
+
+| 选项卡 | 设置项 | 值 |
+|--------|--------|-----|
+| 常规 | 名称 | `MediaMTX` |
+| 常规 | 安全选项 | "不管用户是否登录都要运行" |
+| 触发器 | 开始任务 | "启动时" |
+| 触发器 | 延迟任务时间 | `10 秒`（确保系统网络就绪） |
+| 操作 | 程序或脚本 | `D:\AI\VideoUI\mediamtx.exe` |
+| 操作 | 起始于 | `D:\AI\VideoUI` |
+| 设置 | 如果任务失败，重新启动间隔 | `1 分钟` |
+
+> **启动顺序**：MediaMTX 先启动（延迟 10s），`server.py` 后启动（延迟 15s）。前端页面没有视频流时显示"暂无信号"，MediaMTX 就绪后自动恢复。
+
+### 6. 故障排查
+
+| 现象 | 可能原因 | 解决办法 |
+|------|----------|----------|
+| 页面黑屏，无视频 | RTSP 源未推流 | 检查摄像头 / VLC 推流是否正常 |
+| `no stream is available` | MediaMTX 连不上 RTSP 源 | 检查 RTSP 地址、网络、账号密码 |
+| `UDP timeout` | RTSP 源断连 | 重启摄像头推流，MediaMTX 会自动重连 |
+| 浏览器无法加载视频 | CORS 跨域 | 见下方 CORS 说明 |
+| HLS 地址 404 | 路径名不匹配 | 确认 `paths:` 下的键名与 URL 中的路径一致 |
+
+**CORS 跨域说明**：页面（`localhost:8080`）和 HLS 流（`localhost:8888`）端口不同，可能被浏览器 CORS 策略拦截。两种解决办法：
+
+- **方式一（推荐，专用展示机）**：Chrome 启动时加 `--disable-web-security --disable-features=IsolateOrigins,site-per-process --user-data-dir=C:\temp\chrome-unsafe`
+- **方式二**：在 `server.py` 中配置 HLS 代理路由，将 MediaMTX 的请求转为同源
+
+---
 
 ## 开机自启（Windows）
 
@@ -351,16 +471,19 @@ curl -X POST http://<server>:8080/api/parkingspace \
 
 ```
 VideoUI/
-├── server.py         # HTTP 服务端（接收 POST + 托管静态文件）
-├── start_server.bat  # 开机自启脚本
-├── index.html        # 大屏展示页
-├── admin.html        # 配置管理页
+├── server.py              # HTTP 服务端（接收 POST + 托管静态文件）
+├── start_server.bat       # 开机自启脚本
+├── mediamtx.yml.example   # MediaMTX 配置模板
+├── index.html             # 大屏展示页
+├── admin.html             # 配置管理页
 ├── css/
-│   └── style.css     # 样式（9:4 自适应、户外大字体）
+│   └── style.css          # 样式（9:4 自适应、户外大字体）
 ├── js/
-│   ├── config.js     # 配置读写（localStorage）
-│   ├── main.js       # 大屏逻辑（数据轮询、视频轮播、动画）
-│   └── admin.js      # 管理页表单逻辑
+│   ├── config.js          # 配置读写（localStorage）
+│   ├── main.js            # 大屏逻辑（数据轮询、视频轮播、动画）
+│   ├── admin.js           # 管理页表单逻辑
+│   ├── hls.min.js         # hls.js 库（HLS 解码，Chrome/Edge 推荐）
+│   └── flv.min.js         # flv.js 库（HTTP-FLV 解码，新版 MediaMTX 备用）
 └── README.md
 ```
 

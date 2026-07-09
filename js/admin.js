@@ -93,14 +93,16 @@
     // Type field
     var grpType = createSelectGroup('视频类型', 'stream-type-' + idx,
       [
-	        { value: 'iframe', text: 'iframe（IP 摄像头网页）' },
-	        { value: 'hls', text: 'HLS 视频流（.m3u8）' },
-	        { value: 'flv', text: 'HTTP-FLV 视频流（推荐，需 MediaMTX）' },
-	      ],
+        { value: 'iframe', text: 'iframe（IP 摄像头网页）' },
+        { value: 'hls', text: 'HLS 视频流（.m3u8）' },
+        { value: 'flv', text: 'HTTP-FLV 视频流（需 MediaMTX）' },
+        { value: 'webrtc', text: 'WebRTC 视频流（超低延迟，支持H.265）' },
+        { value: 'local', text: '本地视频文件（MP4/WebM）' },
+      ],
       stream.type);
     // URL field
     var grpUrl = createFieldGroup('视频地址', 'text', 'stream-url-' + idx, stream.url,
-      'iframe：IP 摄像头网页地址 | HLS：.m3u8 流地址 | FLV：HTTP-FLV 地址（http://host:8887/path）');
+      'iframe：完整网页地址 | HLS：/hls/xxx/index.m3u8 | FLV：/flv/xxx | WebRTC：/webrtc/xxx | 本地：/videos/xxx.mp4');
 
     row.appendChild(header);
     row.appendChild(grpLabel);

@@ -56,6 +56,12 @@
       if (existing[i]._flvPlayer) {
         try { existing[i]._flvPlayer.destroy(); } catch (e) { /* ignore */ }
       }
+      if (existing[i]._hlsPlayer) {
+        try { existing[i]._hlsPlayer.destroy(); } catch (e) { /* ignore */ }
+      }
+      if (existing[i]._webrtcPc) {
+        try { existing[i]._webrtcPc.close(); } catch (e) { /* ignore */ }
+      }
       existing[i].remove();
     }
 
@@ -82,10 +88,26 @@
       if (idx === 0) panel.classList.add('active');
 
       // Embed video / iframe
+      // NOTE: check 'local' BEFORE the .m3u8 heuristic so /videos/foo.m3u8
+      //       paths are not misidentified as HLS streams
+      var isLocal = stream.type === 'local';
       var isHls = stream.type === 'hls' || (stream.url && stream.url.indexOf('.m3u8') !== -1);
       var isFlv = stream.type === 'flv';
+      var isWebrtc = stream.type === 'webrtc';
 
-      if (isFlv) {
+      if (isWebrtc) {
+        // WebRTC/WHEP: ultra-low latency, native H.265 support via WHEP
+        setupWebrtcPlayer(panel, stream.url);
+      } else if (isLocal) {
+        // Local video file: native <video> tag, served by Nginx /videos/
+        var localVideo = document.createElement('video');
+        localVideo.src = stream.url;
+        localVideo.autoplay = true;
+        localVideo.muted = true;
+        localVideo.loop = true;
+        localVideo.playsInline = true;
+        panel.appendChild(localVideo);
+      } else if (isFlv) {
         // HTTP-FLV: use flv.js + <video> (MSE hardware decoding)
         var flvVideo = document.createElement('video');
         flvVideo.autoplay = true;
@@ -102,6 +124,7 @@
           });
           player.attachMediaElement(flvVideo);
           player.load();
+          player.play();  // explicitly start playback
           // Store player reference for cleanup
           panel._flvPlayer = player;
         } catch (e) {
@@ -117,8 +140,26 @@
         hlsVideo.muted = true;
         hlsVideo.loop = true;
         hlsVideo.playsInline = true;
-        hlsVideo.src = stream.url;
         panel.appendChild(hlsVideo);
+
+        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+          var hls = new Hls({
+            enableWorker: true,
+            lowLatencyMode: false,
+          });
+          hls.loadSource(stream.url);
+          hls.attachMedia(hlsVideo);
+          hls.on(Hls.Events.ERROR, function (event, data) {
+            if (data.fatal) {
+              console.error('HLS error, recovering...', data);
+              hls.recoverMediaError();
+            }
+          });
+          panel._hlsPlayer = hls;
+        } else {
+          // Fallback: native HLS support (Safari)
+          hlsVideo.src = stream.url;
+        }
       } else {
         var iframe = document.createElement('iframe');
         iframe.src = stream.url;
@@ -140,6 +181,67 @@
     if (validStreams.length > 1 && switchInterval > 0) {
       startVideoSwitch(switchInterval);
     }
+  }
+
+  function setupWebrtcPlayer(panel, url) {
+    var video = document.createElement('video');
+    video.autoplay = true;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    panel.appendChild(video);
+
+    var pc = null;
+    try {
+      pc = new RTCPeerConnection({ iceServers: [] });
+    } catch (e) {
+      console.error('WebRTC not supported:', e);
+      var errOverlay = document.createElement('div');
+      errOverlay.className = 'error-overlay visible';
+      errOverlay.textContent = '浏览器不支持 WebRTC';
+      panel.appendChild(errOverlay);
+      return;
+    }
+
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+
+    var hasVideo = false;
+    pc.ontrack = function (event) {
+      if (event.track.kind === 'video' && !hasVideo) {
+        hasVideo = true;
+        video.srcObject = event.streams[0];
+      }
+    };
+
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        console.error('WebRTC connection', pc.connectionState);
+      }
+    };
+
+    pc.createOffer().then(function (offer) {
+      return pc.setLocalDescription(offer);
+    }).then(function () {
+      return fetch(url + '/whep', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: pc.localDescription.sdp,
+      });
+    }).then(function (response) {
+      if (!response.ok) throw new Error('WHEP returned ' + response.status);
+      return response.text();
+    }).then(function (answerSdp) {
+      return pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    }).catch(function (err) {
+      console.error('WebRTC/WHEP failed:', err);
+      var errDiv = document.createElement('div');
+      errDiv.className = 'error-overlay visible';
+      errDiv.textContent = 'WebRTC 连接失败：' + (err.message || '未知错误');
+      panel.appendChild(errDiv);
+    });
+
+    panel._webrtcPc = pc;
   }
 
   function startVideoSwitch(intervalSec) {
