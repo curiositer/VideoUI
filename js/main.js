@@ -10,8 +10,7 @@
   const els = {
     name:          document.getElementById('name'),
     totalSpaces:   document.getElementById('total-spaces'),
-    availLot:      document.getElementById('avail-lot'),
-    availBuilding: document.getElementById('avail-building'),
+    availTotal:    document.getElementById('avail-total'),
     statusDot:     document.getElementById('status-dot'),
     videoArea:     document.getElementById('video-area'),
     placeholder:   document.getElementById('placeholder-video'),
@@ -23,7 +22,7 @@
   let videoSwitchTimerId = null;
   let currentVideoIndex = 0;
   let consecutiveFailures = 0;
-  let lastData = { total: null, availLot: null, availBuilding: null };
+  let lastData = { total: null, availTotal: null };
   const MAX_FAILURES = 3;
 
   // --- Init ---
@@ -41,7 +40,7 @@
   }
 
   // ====================================================================
-  //  Video Streams — dynamic panels, floating labels, rotation
+  //  Video Streams — dynamic panels, rotation
   // ====================================================================
 
   function setupVideos(streams, switchInterval) {
@@ -167,12 +166,6 @@
         iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
         panel.appendChild(iframe);
       }
-
-      // Floating label (top-left overlay)
-      var label = document.createElement('div');
-      label.className = 'video-label';
-      label.textContent = stream.label || ('监控画面 ' + (idx + 1));
-      panel.appendChild(label);
 
       area.appendChild(panel);
     }
@@ -305,13 +298,12 @@
       // Compute combined values
       var totalA = (a && typeof a.total === 'number') ? a.total : 0;
       var totalB = (b && typeof b.total === 'number') ? b.total : 0;
-      var availA = (a && typeof a.available === 'number') ? a.available : null;
-      var availB = (b && typeof b.available === 'number') ? b.available : null;
+      var availA = (a && typeof a.available === 'number') ? a.available : 0;
+      var availB = (b && typeof b.available === 'number') ? b.available : 0;
 
       var combined = {
         total: totalA + totalB,
-        availLot: availA,
-        availBuilding: availB,
+        availTotal: availA + availB,
       };
 
       // Only count as valid if at least one lot has reported
@@ -328,10 +320,9 @@
       console.error('Status poll failed:', e);
       consecutiveFailures++;
       if (consecutiveFailures >= MAX_FAILURES) {
-        lastData = { total: null, availLot: null, availBuilding: null };
+        lastData = { total: null, availTotal: null };
         els.totalSpaces.textContent = '--';
-        els.availLot.textContent = '--';
-        els.availBuilding.textContent = '--';
+        els.availTotal.textContent = '--';
       }
       setStatus(false);
     }
@@ -344,14 +335,9 @@
       updateValue(els.totalSpaces, data.total);
     }
 
-    // Parking lot available (green)
-    if (data.availLot !== null && data.availLot !== undefined) {
-      updateValue(els.availLot, data.availLot);
-    }
-
-    // Parking building available (green)
-    if (data.availBuilding !== null && data.availBuilding !== undefined) {
-      updateValue(els.availBuilding, data.availBuilding);
+    // Total available (green)
+    if (data.availTotal !== null && data.availTotal !== undefined) {
+      updateValue(els.availTotal, data.availTotal);
     }
   }
 

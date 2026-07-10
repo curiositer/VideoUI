@@ -8,7 +8,7 @@ Endpoints:
     GET  /                   → index.html (main display page)
     GET  /admin.html         → admin config page
     GET  /css/*, /js/*       → static assets
-    POST /api/parkingspace   → parking lot client reports space data
+    POST /parking            → parking lot client reports space data
     GET  /api/parking/status → frontend polls this for latest data
 """
 
@@ -114,7 +114,7 @@ class ParkingServer(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path == "/api/parkingspace":
+        if path == "/parking":
             self._handle_parkingspace()
         else:
             self.send_error(404, "Not Found")
@@ -155,7 +155,7 @@ class ParkingServer(SimpleHTTPRequestHandler):
         except json.JSONDecodeError:
             self._json_error(400, "Invalid JSON")
         except Exception as e:
-            print(f"[ERROR] POST /api/parkingspace: {e}", file=sys.stderr)
+            print(f"[ERROR] POST /parking: {e}", file=sys.stderr)
             self._json_error(500, str(e))
 
     def _handle_status(self):
@@ -273,7 +273,7 @@ def main():
     print(f"  Listening on:  http://0.0.0.0:{args.port}")
     print(f"  ParkID A (停车场): {args.parkid_a}")
     print(f"  ParkID B (停车楼): {args.parkid_b}")
-    print(f"  POST endpoint:  http://0.0.0.0:{args.port}/api/parkingspace")
+    print(f"  POST endpoint:  http://0.0.0.0:{args.port}/parking")
     print(f"  GET  endpoint:  http://0.0.0.0:{args.port}/api/parking/status")
     print(f"  Display page:   http://localhost:{args.port}")
     print(f"  Admin page:     http://localhost:{args.port}/admin.html")

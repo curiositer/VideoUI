@@ -27,7 +27,7 @@ nssm install ParkingNginx D:\nginx\nginx.exe
 # 详细步骤见 deploy.md
 
 # 模拟停车场上报
-curl -X POST http://localhost:3000/api/parkingspace \
+curl -X POST http://localhost:3000/parking \
   -H "Content-Type: application/json" \
   -d '{"service":"parkingspace","parkid":"20210001","spacetotal":1000,"spaceLeft":978,"spaceused":22,"time":"2021-02-01 18:24:25","remark":""}'
 ```
@@ -44,7 +44,7 @@ curl -X POST http://localhost:3000/api/parkingspace \
                                                    ├─ /flv/   → FLV 视频流
                                                    └─ /videos/→ 本地 MP4 文件
 
-停车场客户端 → POST /api/parkingspace → server.py (内存存储) ← GET /api/parking/status ← 前端轮询
+停车场客户端 → POST /parking → server.py (内存存储) ← GET /api/parking/status ← 前端轮询
 ```
 
 部署运维详见 `deploy.md`。
@@ -75,7 +75,7 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 
 ### 数据流
 
-1. 停车场客户端在车位变动时 POST 到 `/api/parkingspace`，server.py 按 parkid 存入内存
+1. 停车场客户端在车位变动时 POST 到 `/parking`，server.py 按 parkid 存入内存
 2. 前端 `main.js` 按 `pollInterval` 秒轮询 `GET /api/parking/status`，获取 A/B 两个车场最新数据
 3. 总停车位 = a.total + b.total（两个车场总车位之和，红色显示）
 4. 停车场空闲车位 = a.available（绿色显示）
@@ -92,7 +92,7 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 
 ### API 约定
 
-- **POST `/api/parkingspace`**：停车场客户端上报，body 包含 `parkid`、`spacetotal`、`spaceLeft` 等
+- **POST `/parking`**：停车场客户端上报，body 包含 `parkid`、`spacetotal`、`spaceLeft` 等
 - **GET `/api/parking/status`**：前端轮询，返回 `{a: {total, available}, b: {total, available}}`
 
 ### 错误处理策略
