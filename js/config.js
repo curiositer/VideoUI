@@ -18,13 +18,17 @@ const DEFAULT_CONFIG = {
   parkingName: 'xxxx景区游客中心停车场',
 
   // Video streams — array of {url, type, label}
-  // type: 'iframe' (IP摄像机网页), 'hls' (.m3u8流), 'flv' (HTTP-FLV流，推荐)
-  // label: shown in top-left overlay
+  // type: 'iframe' (IP摄像机网页), 'hls' (.m3u8流), 'flv' (HTTP-FLV流), 'webrtc' (WebRTC), 'local' (本地视频)
+  // The first valid stream is used as the camera feed
   videoStreams: [],
 
-  // How many seconds to show each video stream before switching to the next
-  // Only applies when there are 2+ streams configured
-  videoSwitchInterval: 10,
+  // Subfolder under /videos/ containing ad videos to play between camera intervals
+  // e.g. 'ads' → /videos/ads/; leave empty to disable ad rotation
+  videoFolder: '',
+
+  // How many seconds to show the camera feed before switching to an ad video
+  // Default 300 = 5 minutes
+  cameraDuration: 300,
 };
 
 /**

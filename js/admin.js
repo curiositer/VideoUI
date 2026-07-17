@@ -11,7 +11,8 @@
     { id: 'parkIdA',           key: 'parkIdA',           type: 'value' },
     { id: 'parkIdB',           key: 'parkIdB',           type: 'value' },
     { id: 'pollInterval',      key: 'pollInterval',      type: 'number' },
-    { id: 'videoSwitchInterval', key: 'videoSwitchInterval', type: 'number' },
+    { id: 'videoFolder',       key: 'videoFolder',       type: 'value' },
+    { id: 'cameraDuration',    key: 'cameraDuration',    type: 'number' },
   ];
 
   var toast = document.getElementById('toast');

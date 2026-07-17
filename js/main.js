@@ -1,6 +1,6 @@
 /* ============================================================
    Main Display Logic — polls local server, updates all fields,
-   manages multiple video streams with rotation
+   camera + ad video alternating playback
    ============================================================ */
 
 (function () {
@@ -19,11 +19,19 @@
   // --- State ---
   let config;
   let pollTimerId = null;
-  let videoSwitchTimerId = null;
-  let currentVideoIndex = 0;
   let consecutiveFailures = 0;
   let lastData = { total: null, availTotal: null };
   const MAX_FAILURES = 3;
+
+  // Video cycle state
+  var videoState = 'camera';       // 'camera' | 'ad'
+  var cameraTimerId = null;
+  var adFileList = [];             // filenames from /api/video-list
+  var currentAdIndex = 0;
+  var currentVideoEl = null;       // single <video> element
+  var currentPlayer = null;        // hls.js / flv.js / RTCPeerConnection
+  var videoPanel = null;           // container div
+  var currentCameraUrl = '';       // track camera source to avoid unnecessary rebuild
 
   // --- Init ---
   function init() {
@@ -35,164 +43,177 @@
 
   // --- Apply config to DOM ---
   function applyConfig() {
-    setupVideos(config.videoStreams || [], config.videoSwitchInterval || 10);
-    els.name.textContent = config.parkingName || '景区游客中心停车场';
+    setupVideoSystem(config);
+    var rawName = config.parkingName || 'xxxx景区游客中心停车场';
+    els.name.innerHTML = rawName.replace(/\n/g, '<br>');
   }
 
   // ====================================================================
-  //  Video Streams — dynamic panels, rotation
+  //  Video System — camera + ad video alternating state machine
   // ====================================================================
 
-  function setupVideos(streams, switchInterval) {
+  function setupVideoSystem(cfg) {
     var area = els.videoArea;
     var placeholder = els.placeholder;
     if (!area) return;
 
-    // Remove existing panels (keep placeholder)
-    // Destroy flv.js players first
-    var existing = area.querySelectorAll('.video-panel');
-    for (var i = 0; i < existing.length; i++) {
-      if (existing[i]._flvPlayer) {
-        try { existing[i]._flvPlayer.destroy(); } catch (e) { /* ignore */ }
+    // Get camera source (first valid stream in videoStreams)
+    var streams = cfg.videoStreams || [];
+    var cameraSource = null;
+    for (var i = 0; i < streams.length; i++) {
+      if (streams[i] && streams[i].url && streams[i].url.trim()) {
+        cameraSource = streams[i];
+        break;
       }
-      if (existing[i]._hlsPlayer) {
-        try { existing[i]._hlsPlayer.destroy(); } catch (e) { /* ignore */ }
-      }
-      if (existing[i]._webrtcPc) {
-        try { existing[i]._webrtcPc.close(); } catch (e) { /* ignore */ }
-      }
-      existing[i].remove();
     }
 
-    // Stop any running rotation
-    stopVideoSwitch();
-    currentVideoIndex = 0;
-
-    // Filter out streams with no URL configured
-    var validStreams = (streams || []).filter(function (s) { return s && s.url && s.url.trim(); });
-
-    if (validStreams.length === 0) {
+    if (!cameraSource) {
+      // No camera — full teardown
+      cleanupVideoSystem();
+      if (videoPanel) { videoPanel.remove(); videoPanel = null; currentVideoEl = null; }
+      currentCameraUrl = '';
       if (placeholder) placeholder.style.display = 'flex';
       return;
     }
 
     if (placeholder) placeholder.style.display = 'none';
 
-    // Create a panel for each valid stream
-    for (var idx = 0; idx < validStreams.length; idx++) {
-      var stream = validStreams[idx];
-      var panel = document.createElement('div');
-      panel.className = 'video-panel';
-      panel.id = 'video-panel-' + idx;
-      if (idx === 0) panel.classList.add('active');
+    var cameraChanged = (currentCameraUrl !== cameraSource.url);
 
-      // Embed video / iframe
-      // NOTE: check 'local' BEFORE the .m3u8 heuristic so /videos/foo.m3u8
-      //       paths are not misidentified as HLS streams
-      var isLocal = stream.type === 'local';
-      var isHls = stream.type === 'hls' || (stream.url && stream.url.indexOf('.m3u8') !== -1);
-      var isFlv = stream.type === 'flv';
-      var isWebrtc = stream.type === 'webrtc';
+    // Soft cleanup: stop timer, reset ad state (keep DOM; keep player if camera unchanged)
+    cleanupVideoSystem(!cameraChanged);
 
-      if (isWebrtc) {
-        // WebRTC/WHEP: ultra-low latency, native H.265 support via WHEP
-        setupWebrtcPlayer(panel, stream.url);
-      } else if (isLocal) {
-        // Local video file: native <video> tag, served by Nginx /videos/
-        var localVideo = document.createElement('video');
-        localVideo.src = stream.url;
-        localVideo.autoplay = true;
-        localVideo.muted = true;
-        localVideo.loop = true;
-        localVideo.playsInline = true;
-        panel.appendChild(localVideo);
-      } else if (isFlv) {
-        // HTTP-FLV: use flv.js + <video> (MSE hardware decoding)
-        var flvVideo = document.createElement('video');
-        flvVideo.autoplay = true;
-        flvVideo.muted = true;
-        flvVideo.loop = true;
-        flvVideo.playsInline = true;
-        panel.appendChild(flvVideo);
+    // Create panel + video element only if it doesn't exist yet
+    if (!videoPanel || !videoPanel.parentNode) {
+      videoPanel = document.createElement('div');
+      videoPanel.className = 'video-panel';
+      videoPanel.id = 'video-panel-main';
 
-        try {
-          var player = flvjs.createPlayer({
-            type: 'flv',
-            url: stream.url,
-            isLive: true,
-          });
-          player.attachMediaElement(flvVideo);
-          player.load();
-          player.play();  // explicitly start playback
-          // Store player reference for cleanup
-          panel._flvPlayer = player;
-        } catch (e) {
-          console.error('flv.js player init failed for', stream.url, e);
-          var errOverlay = document.createElement('div');
-          errOverlay.className = 'error-overlay visible';
-          errOverlay.textContent = 'FLV 流加载失败：' + (e.message || '未知错误');
-          panel.appendChild(errOverlay);
-        }
-      } else if (isHls) {
-        var hlsVideo = document.createElement('video');
-        hlsVideo.autoplay = true;
-        hlsVideo.muted = true;
-        hlsVideo.loop = true;
-        hlsVideo.playsInline = true;
-        panel.appendChild(hlsVideo);
+      currentVideoEl = document.createElement('video');
+      currentVideoEl.autoplay = true;
+      currentVideoEl.muted = true;
+      currentVideoEl.playsInline = true;
+      currentVideoEl.loop = true;
+      videoPanel.appendChild(currentVideoEl);
+      area.appendChild(videoPanel);
 
-        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-          var hls = new Hls({
-            enableWorker: true,
-            lowLatencyMode: false,
-          });
-          hls.loadSource(stream.url);
-          hls.attachMedia(hlsVideo);
-          hls.on(Hls.Events.ERROR, function (event, data) {
-            if (data.fatal) {
-              console.error('HLS error, recovering...', data);
-              hls.recoverMediaError();
-            }
-          });
-          panel._hlsPlayer = hls;
-        } else {
-          // Fallback: native HLS support (Safari)
-          hlsVideo.src = stream.url;
-        }
+      cameraChanged = true; // new element, must set up player
+    }
+
+    // Only rebuild player when camera source actually changed (or first load)
+    if (cameraChanged) {
+      currentCameraUrl = cameraSource.url;
+      playCameraStream(cameraSource);
+    }
+
+    // Fetch ad video list and (re)start cycle
+    // Empty folder = disable ad rotation, camera only
+    var folder = cfg.videoFolder || '';
+    if (folder) {
+      fetchAdFileList(folder);
+    } else {
+      adFileList = [];
+      console.log('Video folder not configured, camera-only mode');
+    }
+  }
+
+  // --- Fetch video file list from server ---
+  function fetchAdFileList(folder) {
+    var url = '/api/video-list?folder=' + encodeURIComponent(folder);
+    fetch(url).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (files) {
+      adFileList = files || [];
+      if (adFileList.length > 0) {
+        console.log('Ad videos found: ' + adFileList.length + ' files');
+        startCameraTimer();
       } else {
+        console.log('No ad videos in folder, showing camera only');
+      }
+    }).catch(function (err) {
+      console.error('Failed to fetch ad video list:', err);
+      adFileList = [];
+    });
+  }
+
+  // --- Play camera stream on the shared <video> element ---
+  function playCameraStream(stream) {
+    if (!currentVideoEl) return;
+
+    // Destroy any existing player (hls/flv/webrtc)
+    destroyPlayer();
+
+    var isLocal = stream.type === 'local';
+    var isHls = stream.type === 'hls' || (stream.url && stream.url.indexOf('.m3u8') !== -1);
+    var isFlv = stream.type === 'flv';
+    var isWebrtc = stream.type === 'webrtc';
+
+    currentVideoEl.loop = true;
+    currentVideoEl.src = '';
+    currentVideoEl.srcObject = null;
+    currentVideoEl.onended = null;
+    currentVideoEl.onerror = null;
+
+    if (isWebrtc) {
+      setupWebrtcOnVideo(currentVideoEl, stream.url);
+    } else if (isLocal) {
+      currentVideoEl.src = stream.url;
+    } else if (isFlv) {
+      try {
+        var player = flvjs.createPlayer({
+          type: 'flv',
+          url: stream.url,
+          isLive: true,
+        });
+        player.attachMediaElement(currentVideoEl);
+        player.load();
+        player.play();
+        currentPlayer = player;
+      } catch (e) {
+        console.error('flv.js player init failed:', e);
+      }
+    } else if (isHls) {
+      if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+        var hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: false,
+        });
+        hls.loadSource(stream.url);
+        hls.attachMedia(currentVideoEl);
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          if (data.fatal) {
+            console.error('HLS error, recovering...', data);
+            hls.recoverMediaError();
+          }
+        });
+        currentPlayer = hls;
+      } else {
+        currentVideoEl.src = stream.url;
+      }
+    } else {
+      // iframe — replace video with iframe inside panel
+      if (videoPanel) {
+        videoPanel.innerHTML = '';
         var iframe = document.createElement('iframe');
         iframe.src = stream.url;
         iframe.allow = 'autoplay';
         iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-        panel.appendChild(iframe);
+        videoPanel.appendChild(iframe);
+        currentVideoEl = null;
       }
-
-      area.appendChild(panel);
     }
 
-    // Start rotation only when there are 2+ streams
-    if (validStreams.length > 1 && switchInterval > 0) {
-      startVideoSwitch(switchInterval);
-    }
+    videoState = 'camera';
   }
 
-  function setupWebrtcPlayer(panel, url) {
-    var video = document.createElement('video');
-    video.autoplay = true;
-    video.muted = true;
-    video.loop = true;
-    video.playsInline = true;
-    panel.appendChild(video);
-
+  // --- WebRTC player on existing <video> ---
+  function setupWebrtcOnVideo(video, url) {
     var pc = null;
     try {
       pc = new RTCPeerConnection({ iceServers: [] });
     } catch (e) {
       console.error('WebRTC not supported:', e);
-      var errOverlay = document.createElement('div');
-      errOverlay.className = 'error-overlay visible';
-      errOverlay.textContent = '浏览器不支持 WebRTC';
-      panel.appendChild(errOverlay);
       return;
     }
 
@@ -228,44 +249,156 @@
       return pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
     }).catch(function (err) {
       console.error('WebRTC/WHEP failed:', err);
-      var errDiv = document.createElement('div');
-      errDiv.className = 'error-overlay visible';
-      errDiv.textContent = 'WebRTC 连接失败：' + (err.message || '未知错误');
-      panel.appendChild(errDiv);
     });
 
-    panel._webrtcPc = pc;
+    currentPlayer = pc;
   }
 
-  function startVideoSwitch(intervalSec) {
-    stopVideoSwitch();
-    videoSwitchTimerId = setInterval(switchToNextVideo, intervalSec * 1000);
-    console.log('Video rotation started: every ' + intervalSec + 's');
+  // --- Camera timer (switches to ad video after cameraDuration) ---
+  function startCameraTimer() {
+    stopCameraTimer();
+    var duration = (config.cameraDuration || 300);
+    console.log('Camera timer: ' + duration + 's until next ad video');
+    cameraTimerId = setTimeout(function () {
+      switchToAdVideo();
+    }, duration * 1000);
   }
 
-  function stopVideoSwitch() {
-    if (videoSwitchTimerId) {
-      clearInterval(videoSwitchTimerId);
-      videoSwitchTimerId = null;
+  function stopCameraTimer() {
+    if (cameraTimerId !== null) {
+      clearTimeout(cameraTimerId);
+      cameraTimerId = null;
     }
   }
 
-  function switchToNextVideo() {
-    var panels = document.querySelectorAll('#video-area .video-panel');
-    if (panels.length <= 1) return;
-
-    // Hide current
-    if (panels[currentVideoIndex]) {
-      panels[currentVideoIndex].classList.remove('active');
+  // --- Switch to ad video ---
+  function switchToAdVideo() {
+    if (adFileList.length === 0) {
+      // No ad videos — stay in camera mode
+      return;
     }
 
-    // Advance to next (wrap around)
-    currentVideoIndex = (currentVideoIndex + 1) % panels.length;
-
-    // Show next
-    if (panels[currentVideoIndex]) {
-      panels[currentVideoIndex].classList.add('active');
+    if (!currentVideoEl) {
+      // iframe mode — need to rebuild video element
+      rebuildVideoElement();
+      if (!currentVideoEl) return;
     }
+
+    var filename = adFileList[currentAdIndex];
+    var folder = config.videoFolder ? config.videoFolder + '/' : '';
+    var videoUrl = '/videos/' + folder + filename;
+
+    // Destroy camera player before switching
+    destroyPlayer();
+
+    // Fully reset video element so hls.js/flv.js doesn't interfere
+    currentVideoEl.removeAttribute('src');
+    currentVideoEl.srcObject = null;
+    currentVideoEl.load();
+
+    // Set up local video playback
+    currentVideoEl.loop = false;
+    currentVideoEl.src = videoUrl;
+    currentVideoEl.onended = onAdVideoEnded;
+    currentVideoEl.onerror = onAdVideoError;
+
+    // Explicit play() — autoplay alone may not trigger on src change
+    currentVideoEl.play().catch(function (err) {
+      console.error('Ad video play() rejected:', err.message);
+    });
+
+    videoState = 'ad';
+    console.log('Playing ad video (' + (currentAdIndex + 1) + '/' + adFileList.length + '): ' + filename);
+  }
+
+  function onAdVideoEnded() {
+    console.log('Ad video ended, switching back to camera');
+    currentAdIndex = (currentAdIndex + 1) % adFileList.length;
+    switchToCamera();
+  }
+
+  function onAdVideoError(e) {
+    var el = currentVideoEl;
+    var code = el && el.error ? el.error.code : 'unknown';
+    var msg = el && el.error ? el.error.message : 'unknown';
+    console.error('Ad video error (code=' + code + '): ' + msg + ' — src=' + (el ? el.src : ''));
+    currentAdIndex = (currentAdIndex + 1) % adFileList.length;
+    switchToCamera();
+  }
+
+  // --- Switch back to camera ---
+  function switchToCamera() {
+    if (!currentVideoEl) {
+      rebuildVideoElement();
+      if (!currentVideoEl) return;
+    }
+
+    // Clean up ad video state
+    currentVideoEl.onended = null;
+    currentVideoEl.onerror = null;
+    currentVideoEl.loop = true;
+    currentVideoEl.src = '';
+
+    // Rebuild camera stream from config
+    var streams = config.videoStreams || [];
+    var cameraSource = null;
+    for (var i = 0; i < streams.length; i++) {
+      if (streams[i] && streams[i].url && streams[i].url.trim()) {
+        cameraSource = streams[i];
+        break;
+      }
+    }
+
+    if (cameraSource) {
+      playCameraStream(cameraSource);
+    }
+
+    videoState = 'camera';
+    startCameraTimer();
+  }
+
+  // --- Rebuild <video> element (if iframe replaced it) ---
+  function rebuildVideoElement() {
+    if (!videoPanel) return;
+    videoPanel.innerHTML = '';
+    currentVideoEl = document.createElement('video');
+    currentVideoEl.autoplay = true;
+    currentVideoEl.muted = true;
+    currentVideoEl.playsInline = true;
+    currentVideoEl.loop = true;
+    videoPanel.appendChild(currentVideoEl);
+  }
+
+  // --- Destroy current streaming player ---
+  function destroyPlayer() {
+    if (currentPlayer) {
+      // flv.js
+      if (currentPlayer.destroy) {
+        try { currentPlayer.destroy(); } catch (e) { /* ignore */ }
+      }
+      // WebRTC
+      if (currentPlayer.close && !currentPlayer.destroy) {
+        try { currentPlayer.close(); } catch (e) { /* ignore */ }
+      }
+      currentPlayer = null;
+    }
+    if (currentVideoEl) {
+      currentVideoEl.src = '';
+      currentVideoEl.srcObject = null;
+    }
+  }
+
+  // --- Soft cleanup — stop timers, optionally keep player, keep DOM intact ---
+  function cleanupVideoSystem(keepPlayer) {
+    stopCameraTimer();
+    if (!keepPlayer) {
+      destroyPlayer();
+    }
+    adFileList = [];
+    currentAdIndex = 0;
+    videoState = 'camera';
+    // NOTE: do NOT remove videoPanel from DOM — it avoids black flash on hot reload
+    //        do NOT null currentVideoEl / videoPanel — setupVideoSystem will reuse them
   }
 
   // ====================================================================

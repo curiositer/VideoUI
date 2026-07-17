@@ -10,6 +10,7 @@ Endpoints:
     GET  /css/*, /js/*       → static assets
     POST /parking            → parking lot client reports space data
     GET  /api/parking/status → frontend polls this for latest data
+    GET  /api/video-list     → list video files in configured folder
 """
 
 import argparse
@@ -19,7 +20,7 @@ import sys
 import threading
 import time
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ class ParkingServer(SimpleHTTPRequestHandler):
     # Injected by server factory
     parkid_a: str = ""
     parkid_b: str = ""
+    video_dir: str = ""
 
     def __init__(self, *args, **kwargs):
         # Serve from the script's directory
@@ -104,6 +106,10 @@ class ParkingServer(SimpleHTTPRequestHandler):
 
         if path == "/api/parking/status":
             self._handle_status()
+        elif path == "/api/video-list":
+            self._handle_video_list()
+        elif path.startswith("/videos/"):
+            self._serve_video_file(path)
         elif path == "/":
             self._serve_file("index.html")
         else:
@@ -165,6 +171,71 @@ class ParkingServer(SimpleHTTPRequestHandler):
             self._json_ok(status)
         except Exception as e:
             self._json_error(500, str(e))
+
+    def _handle_video_list(self):
+        """List video files in the configured video directory (or subfolder)."""
+        try:
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            folder = params.get("folder", [""])[0]
+
+            # Security: prevent directory traversal
+            if ".." in folder or os.path.isabs(folder):
+                self._json_error(403, "Forbidden")
+                return
+
+            base = self.video_dir or r"D:\videos"
+            target = os.path.normpath(os.path.join(base, folder))
+
+            # Ensure target is still within base directory
+            if not target.startswith(os.path.normpath(base)):
+                self._json_error(403, "Forbidden")
+                return
+
+            if not os.path.isdir(target):
+                self._json_ok([])
+                return
+
+            VIDEO_EXTS = {".mp4", ".webm", ".mkv", ".mov", ".avi"}
+            files = sorted([
+                f for f in os.listdir(target)
+                if os.path.splitext(f)[1].lower() in VIDEO_EXTS
+                and os.path.isfile(os.path.join(target, f))
+            ])
+
+            self._json_ok(files)
+
+        except Exception as e:
+            print(f"[ERROR] GET /api/video-list: {e}", file=sys.stderr)
+            self._json_error(500, str(e))
+
+    def _serve_video_file(self, path: str):
+        """Serve video files from the configured video_dir."""
+        # Strip /videos/ prefix and join with video_dir
+        relative = path[len("/videos/"):]
+        # Security: prevent directory traversal
+        safe = os.path.normpath(relative)
+        if safe.startswith("..") or os.path.isabs(safe):
+            self.send_error(403, "Forbidden")
+            return
+
+        base = self.video_dir or r"D:\videos"
+        filepath = os.path.join(base, safe)
+        if not os.path.isfile(filepath):
+            self.send_error(404, "File not found")
+            return
+
+        try:
+            with open(filepath, "rb") as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", guess_mime(filepath))
+            self.send_header("Content-Length", len(content))
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            self.wfile.write(content)
+        except OSError:
+            self.send_error(500, "Read error")
 
     # ---- Static file helpers ----------------------------------------------
 
@@ -238,11 +309,12 @@ class ParkingServer(SimpleHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 # Server factory (binds parkid config to handler)
 # ---------------------------------------------------------------------------
-def make_server(port: int, parkid_a: str, parkid_b: str) -> HTTPServer:
+def make_server(port: int, parkid_a: str, parkid_b: str, video_dir: str) -> HTTPServer:
     """Create an HTTPServer with our custom handler and injected config."""
     # Bind config as class attributes
     ParkingServer.parkid_a = parkid_a
     ParkingServer.parkid_b = parkid_b
+    ParkingServer.video_dir = video_dir
 
     server = HTTPServer(("0.0.0.0", port), ParkingServer)
     return server
@@ -264,17 +336,23 @@ def main():
         "--parkid-b", type=str, default="20210002",
         help="ParkID mapped to slot B / 停车楼 (default: 20210002)"
     )
+    parser.add_argument(
+        "--video-dir", type=str, default=r"D:\videos",
+        help="Directory for ad videos, used by /api/video-list (default: D:\\videos)"
+    )
     args = parser.parse_args()
 
-    server = make_server(args.port, args.parkid_a, args.parkid_b)
+    server = make_server(args.port, args.parkid_a, args.parkid_b, args.video_dir)
 
     print(f"=" * 60)
     print(f"  Parking Display Server")
     print(f"  Listening on:  http://0.0.0.0:{args.port}")
     print(f"  ParkID A (停车场): {args.parkid_a}")
     print(f"  ParkID B (停车楼): {args.parkid_b}")
+    print(f"  Video dir:      {args.video_dir}")
     print(f"  POST endpoint:  http://0.0.0.0:{args.port}/parking")
     print(f"  GET  endpoint:  http://0.0.0.0:{args.port}/api/parking/status")
+    print(f"  Video list API: http://0.0.0.0:{args.port}/api/video-list?folder=")
     print(f"  Display page:   http://localhost:{args.port}")
     print(f"  Admin page:     http://localhost:{args.port}/admin.html")
     print(f"=" * 60)

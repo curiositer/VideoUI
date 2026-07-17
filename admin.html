@@ -19,8 +19,8 @@
       <h2>显示设置</h2>
       <div class="form-group">
         <label for="parkingName">景区名称</label>
-        <input type="text" id="parkingName" placeholder="xxxx景区游客中心停车场">
-        <span class="hint">大屏顶部显示的停车场名称</span>
+        <textarea id="parkingName" rows="2" placeholder="xxxx景区游客中心停车场"></textarea>
+        <span class="hint">大屏顶部显示的停车场名称，按 Enter 换行</span>
       </div>
     </div>
 
@@ -56,12 +56,6 @@
     <div class="form-section">
       <h2>监控画面</h2>
 
-      <div class="form-group">
-        <label for="videoSwitchInterval">画面切换间隔（秒）</label>
-        <input type="number" id="videoSwitchInterval" min="1" max="120" value="10">
-        <span class="hint">多路监控画面轮播切换间隔，默认 10 秒</span>
-      </div>
-
       <div id="video-streams-list">
         <!-- Stream rows rendered dynamically by admin.js -->
       </div>
@@ -69,6 +63,23 @@
       <button class="btn-add-stream" id="btn-add-stream" type="button">
         ＋ 添加监控画面
       </button>
+    </div>
+
+    <!-- === Ad Video Playback === -->
+    <div class="form-section">
+      <h2>广告视频轮播</h2>
+
+      <div class="form-group">
+        <label for="videoFolder">视频文件夹（相对于 /videos/）</label>
+        <input type="text" id="videoFolder" placeholder="ads">
+        <span class="hint">存放轮播视频的子文件夹，如 ads 对应 /videos/ads/。留空则禁用广告轮播，始终显示摄像头画面。系统按文件名排序播放 .mp4 / .webm / .mkv 文件。</span>
+      </div>
+
+      <div class="form-group">
+        <label for="cameraDuration">摄像头持续显示时间（秒）</label>
+        <input type="number" id="cameraDuration" min="10" max="3600" value="300">
+        <span class="hint">每个广告视频播完后，摄像头画面持续显示的时间。默认 300 秒（5 分钟）。</span>
+      </div>
     </div>
 
     <!-- === Actions === -->

@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # 启动服务端（接收停车场 POST + 托管静态文件）
-python server.py --port 3000 --parkid-a 20210001 --parkid-b 20210002
+python server.py --port 3000 --parkid-a 20210001 --parkid-b 20210002 --video-dir D:\videos
 
 # 启动 MediaMTX（RTSP → HLS / HTTP-FLV 桥接）
 ./mediamtx                                    # Windows: mediamtx.exe
@@ -51,13 +51,13 @@ curl -X POST http://localhost:3000/parking \
 
 ```
 server.py               → HTTP 服务端：接收 POST、提供 GET、托管静态文件（默认端口 3000）
-index.html              → 主展示页：左 3/4 视频 + 右 1/4 车位卡片（四行信息）
+index.html              → 主展示页：左 3/4 视频 + 右 1/4 车位卡片（三行信息）
 admin.html              → 配置管理页：所有设置写入 localStorage
 nginx.conf              → Nginx 反向代理配置：统一入口 :80，消除跨域
 deploy.md               → 部署运维手册：服务注册、开机自启、故障恢复
 css/style.css           → 全局样式：9:4 自适应容器、卡片、视频面板、管理页表单
 js/config.js            → 配置读写模块：getConfig() / saveConfig() / resetConfig()
-js/main.js              → 主屏逻辑：轮询 GET /api/parking/status、数字动画、错误降级、视频播放
+js/main.js              → 主屏逻辑：轮询 GET /api/parking/status、数字动画、错误降级、摄像头+广告交替播放
 js/admin.js             → 管理页表单：加载当前配置、保存、重置
 js/hls.min.js           → hls.js 库：浏览器端解码 HLS 流
 js/flv.min.js           → flv.js 库：浏览器端 MSE 解码 HTTP-FLV
@@ -69,8 +69,7 @@ mediamtx.yml.example    → MediaMTX 配置模板，供用户参考
 ```
 xxxx景区游客中心停车场    ← 景区名称 (cyan)
 总停车位：1000 个         ← A+B 合计 (红色)
-停车场空闲车位：978 个     ← parkid-a 空闲 (绿色)
-停车楼空闲车位：120 个     ← parkid-b 空闲 (绿色)
+总空闲车位：1098 个       ← A+B 空闲合计 (绿色)
 ```
 
 ### 数据流
@@ -78,8 +77,7 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 1. 停车场客户端在车位变动时 POST 到 `/parking`，server.py 按 parkid 存入内存
 2. 前端 `main.js` 按 `pollInterval` 秒轮询 `GET /api/parking/status`，获取 A/B 两个车场最新数据
 3. 总停车位 = a.total + b.total（两个车场总车位之和，红色显示）
-4. 停车场空闲车位 = a.available（绿色显示）
-5. 停车楼空闲车位 = b.available（绿色显示）
+4. 总空闲车位 = a.available + b.available（两个车场空闲车位之和，绿色显示）
 6. 配置在另一标签页修改时，`main.js` 通过 `storage` 事件自动热重载
 
 ### ParkID 映射
@@ -94,6 +92,20 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 
 - **POST `/parking`**：停车场客户端上报，body 包含 `parkid`、`spacetotal`、`spaceLeft` 等
 - **GET `/api/parking/status`**：前端轮询，返回 `{a: {total, available}, b: {total, available}}`
+- **GET `/api/video-list?folder=<subfolder>`**：列出视频目录中的文件，返回 `["file1.mp4", ...]`
+
+### 视频播放模式（摄像头 + 广告交替）
+
+左侧视频区域只有一个画面。`videoStreams` 中第一个有效流作为**摄像头实时画面**。配置 `videoFolder`（`/videos/` 下的子文件夹）后，系统按以下节奏交替播放：
+
+```
+摄像头(5min) → 广告视频1 → 摄像头(5min) → 广告视频2 → ...（循环）
+```
+
+- `cameraDuration`（默认 300 秒）控制摄像头持续显示时间
+- 广告视频播完后自动切回摄像头，视频加载失败则跳过该文件
+- `videoFolder` 留空时始终显示摄像头画面
+- 视频文件按文件名排序，支持 `.mp4` / `.webm` / `.mkv`
 
 ### 错误处理策略
 

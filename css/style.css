@@ -118,7 +118,7 @@ html, body {
 
 /* Label row — smaller descriptive text */
 .parking-card .stat-block .stat-label {
-  font-size: clamp(20px, 4vh, 48px);
+  font-size: clamp(30px, 4vh, 48px);
   color: #94a3b8;
   letter-spacing: 0.05em;
   line-height: 1.3;
@@ -162,7 +162,7 @@ html, body {
 
 /* Total available — green */
 .parking-card .stat-block.total-avail .stat-value {
-  font-size: clamp(36px, 8vh, 110px);
+  font-size: clamp(40px, 9vh, 130px);
   color: #10b981;
   text-shadow:
     0 0 20px rgba(16, 185, 129, 0.5),
@@ -191,18 +191,10 @@ html, body {
   overflow: hidden;
 }
 
-/* Panels stack absolutely so they overlap for fade transition */
+/* Single video panel — fills the video area */
 .video-panel {
   position: absolute;
   inset: 0;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.6s ease;
-}
-
-.video-panel.active {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .video-panel iframe,
@@ -212,7 +204,7 @@ html, body {
   width: 100%;
   height: 100%;
   border: none;
-  object-fit: cover;
+  object-fit: fill;
 }
 
 /* --- No-signal placeholder --- */
@@ -330,7 +322,8 @@ html, body {
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
   width: 100%;
   padding: 10px 14px;
   background: #0f172a;
@@ -344,8 +337,15 @@ html, body {
 }
 
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.form-group textarea:focus {
   border-color: #06b6d4;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 42px;
+  field-sizing: content;
 }
 
 .form-group .hint {
