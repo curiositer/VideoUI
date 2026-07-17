@@ -33,6 +33,13 @@
   var videoPanel = null;           // container div
   var currentCameraUrl = '';       // track camera source to avoid unnecessary rebuild
 
+  // WebRTC 自愈状态
+  var webrtcUrl = '';              // 当前 WebRTC 地址（'' = 非 webrtc 模式）
+  var webrtcReconnectId = null;    // 待执行的重连定时器
+  var webrtcWatchdogId = null;     // 帧数看门狗定时器
+  var webrtcStallChecks = 0;       // 看门狗连续检测到无新帧的次数
+  var lastFrameCount = -1;
+
   // --- Init ---
   function init() {
     config = getConfig();
@@ -155,6 +162,8 @@
     currentVideoEl.onended = null;
     currentVideoEl.onerror = null;
 
+    if (!isWebrtc) webrtcUrl = '';   // 离开 webrtc 模式 — 清除自愈目标地址
+
     if (isWebrtc) {
       setupWebrtcOnVideo(currentVideoEl, stream.url);
     } else if (isLocal) {
@@ -207,7 +216,7 @@
     videoState = 'camera';
   }
 
-  // --- WebRTC player on existing <video> ---
+  // --- 在已有 <video> 元素上建立 WebRTC 播放 ---
   function setupWebrtcOnVideo(video, url) {
     var pc = null;
     try {
@@ -217,6 +226,8 @@
       return;
     }
 
+    webrtcUrl = url;
+
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('audio', { direction: 'recvonly' });
 
@@ -225,12 +236,18 @@
       if (event.track.kind === 'video' && !hasVideo) {
         hasVideo = true;
         video.srcObject = event.streams[0];
+        video.play().catch(function () { /* 已静音，正常不会被自动播放策略拦截 */ });
       }
     };
 
     pc.onconnectionstatechange = function () {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        console.error('WebRTC connection', pc.connectionState);
+      if (pc !== currentPlayer) return; // 旧会话残留的 pc，忽略其事件
+      if (pc.connectionState === 'failed') {
+        console.error('WebRTC connection failed, reconnecting...');
+        scheduleWebrtcReconnect(1000);
+      } else if (pc.connectionState === 'disconnected') {
+        // disconnected 常可自行恢复；若未恢复，由帧数看门狗兜底重建
+        console.warn('WebRTC connection disconnected');
       }
     };
 
@@ -249,9 +266,66 @@
       return pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
     }).catch(function (err) {
       console.error('WebRTC/WHEP failed:', err);
+      if (pc === currentPlayer) scheduleWebrtcReconnect(5000);
     });
 
     currentPlayer = pc;
+    startWebrtcWatchdog(video);
+  }
+
+  // --- 拆除当前连接并重建 WebRTC 会话 ---
+  function scheduleWebrtcReconnect(delayMs) {
+    if (webrtcReconnectId !== null) return;   // 已有待执行的重连，去重
+    webrtcReconnectId = setTimeout(function () {
+      webrtcReconnectId = null;
+      // 仅在仍处于 webrtc 摄像头模式时才重连
+      if (videoState !== 'camera' || !webrtcUrl || !currentVideoEl) return;
+      var url = webrtcUrl;
+      console.log('Rebuilding WebRTC session:', url);
+      destroyPlayer();
+      setupWebrtcOnVideo(currentVideoEl, url);
+    }, delayMs);
+  }
+
+  // --- 看门狗：解码帧数停止增长时强制重建会话 ---
+  // 兜底 connectionState 仍为 'connected' 的静默冻结场景
+  function startWebrtcWatchdog(video) {
+    stopWebrtcWatchdog();
+    lastFrameCount = -1;
+    webrtcStallChecks = 0;
+    webrtcWatchdogId = setInterval(function () {
+      if (videoState !== 'camera' || !video.isConnected) return;
+
+      var frames;
+      if (typeof video.getVideoPlaybackQuality === 'function') {
+        frames = video.getVideoPlaybackQuality().totalVideoFrames;
+      } else if (typeof video.webkitDecodedFrameCount === 'number') {
+        frames = video.webkitDecodedFrameCount;
+      } else {
+        frames = video.currentTime; // 兜底：用播放时钟代替帧数
+      }
+
+      if (frames === lastFrameCount) {
+        webrtcStallChecks++;
+        if (webrtcStallChecks >= 2) {   // 约 20 秒无新帧
+          console.error('WebRTC stream stalled (no new frames), rebuilding...');
+          webrtcStallChecks = 0;
+          scheduleWebrtcReconnect(0);
+        }
+      } else {
+        webrtcStallChecks = 0;
+      }
+      lastFrameCount = frames;
+    }, 10000);
+  }
+
+  function stopWebrtcWatchdog() {
+    if (webrtcWatchdogId !== null) {
+      clearInterval(webrtcWatchdogId);
+      webrtcWatchdogId = null;
+    }
+    webrtcStallChecks = 0;
+    lastFrameCount = -1;
   }
 
   // --- Camera timer (switches to ad video after cameraDuration) ---
@@ -317,7 +391,7 @@
     switchToCamera();
   }
 
-  function onAdVideoError(e) {
+  function onAdVideoError() {
     var el = currentVideoEl;
     var code = el && el.error ? el.error.code : 'unknown';
     var msg = el && el.error ? el.error.message : 'unknown';
@@ -371,6 +445,12 @@
 
   // --- Destroy current streaming player ---
   function destroyPlayer() {
+    // 停止 WebRTC 自愈机制（对 hls/flv 是无害的空操作）
+    stopWebrtcWatchdog();
+    if (webrtcReconnectId !== null) {
+      clearTimeout(webrtcReconnectId);
+      webrtcReconnectId = null;
+    }
     if (currentPlayer) {
       // flv.js
       if (currentPlayer.destroy) {
