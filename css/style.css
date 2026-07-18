@@ -500,6 +500,56 @@ html, body {
   color: #06b6d4;
 }
 
+/* 备用流子列表（嵌套在 stream-row 内） */
+.backup-list {
+  margin-top: 12px;
+  padding: 12px;
+  background: #0b1120;
+  border: 1px dashed #334155;
+  border-radius: 6px;
+}
+
+.backup-title {
+  color: #64748b;
+  font-size: 12px;
+  margin-bottom: 10px;
+  letter-spacing: 0.03em;
+}
+
+.backup-row {
+  background: #111c33;
+  border: 1px solid #2b3a55;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.backup-index {
+  color: #f59e0b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.btn-add-backup {
+  width: 100%;
+  padding: 8px 0;
+  background: transparent;
+  border: 1px dashed #334155;
+  color: #64748b;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  letter-spacing: 0.05em;
+}
+
+.btn-add-backup:hover {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+
 /* Back link */
 .back-link {
   display: inline-block;

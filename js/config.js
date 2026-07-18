@@ -17,10 +17,16 @@ const DEFAULT_CONFIG = {
   // Display name for the location (shown at top of card)
   parkingName: 'xxxx景区游客中心停车场',
 
-  // Video streams — array of {url, type, label}
-  // type: 'iframe' (IP摄像机网页), 'hls' (.m3u8流), 'flv' (HTTP-FLV流), 'webrtc' (WebRTC), 'local' (本地视频)
-  // The first valid stream is used as the camera feed
+  // 监控画面列表 — 数组元素 {url, type, label, backups}
+  // type 仅支持: 'webrtc' (WebRTC 视频流), 'local' (本地视频文件)
+  // backups: 备用流列表 [{url, type}, ...]，主画面断流时依次自动切换；
+  //          主画面持续可达 3 分钟后自动切回
+  // 多个画面按 cameraRotateInterval 秒轮播；只有一个时固定播放
   videoStreams: [],
+
+  // 摄像头画面轮播间隔（秒），0 = 不轮播（固定显示第一个画面）
+  // 仅当 videoStreams 中有效流数量 > 1 时生效
+  cameraRotateInterval: 30,
 
   // Subfolder under /videos/ containing ad videos to play between camera intervals
   // e.g. 'ads' → /videos/ads/; leave empty to disable ad rotation

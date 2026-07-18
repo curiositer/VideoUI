@@ -1,28 +1,35 @@
 /* ============================================================
-   Admin Page Logic — config form with dynamic video stream list
+   管理页逻辑 — 配置表单 + 动态监控画面列表（含备用流子列表）
    ============================================================ */
 
 (function () {
   'use strict';
 
-  // --- Simple field ↔ config key mapping (excludes videoStreams) ---
+  // --- 简单字段 ↔ 配置 key 映射（不含 videoStreams） ---
   var FIELD_MAP = [
-    { id: 'parkingName',       key: 'parkingName',       type: 'value' },
-    { id: 'parkIdA',           key: 'parkIdA',           type: 'value' },
-    { id: 'parkIdB',           key: 'parkIdB',           type: 'value' },
-    { id: 'pollInterval',      key: 'pollInterval',      type: 'number' },
-    { id: 'videoFolder',       key: 'videoFolder',       type: 'value' },
-    { id: 'cameraDuration',    key: 'cameraDuration',    type: 'number' },
+    { id: 'parkingName',          key: 'parkingName',          type: 'value' },
+    { id: 'parkIdA',              key: 'parkIdA',              type: 'value' },
+    { id: 'parkIdB',              key: 'parkIdB',              type: 'value' },
+    { id: 'pollInterval',         key: 'pollInterval',         type: 'number' },
+    { id: 'videoFolder',          key: 'videoFolder',          type: 'value' },
+    { id: 'cameraDuration',       key: 'cameraDuration',       type: 'number' },
+    { id: 'cameraRotateInterval', key: 'cameraRotateInterval', type: 'number' },
+  ];
+
+  // 视频类型选项（仅支持 webrtc / local 两种）
+  var TYPE_OPTIONS = [
+    { value: 'webrtc', text: 'WebRTC 视频流（超低延迟，支持H.265）' },
+    { value: 'local', text: '本地视频文件（MP4/WebM）' },
   ];
 
   var toast = document.getElementById('toast');
   var streamListEl = document.getElementById('video-streams-list');
   var btnAddStream = document.getElementById('btn-add-stream');
 
-  // Current video streams being edited
+  // 正在编辑的监控画面列表
   var editingStreams = [];
 
-  // --- Init: populate form from current config ---
+  // --- 初始化：把当前配置填入表单 ---
   function init() {
     var config = getConfig();
     populateForm(config);
@@ -37,24 +44,28 @@
     FIELD_MAP.forEach(function (item) {
       var el = document.getElementById(item.id);
       if (!el) return;
-      if (item.type === 'number') {
-        el.value = config[item.key] != null ? config[item.key] : '';
-      } else {
-        el.value = config[item.key] != null ? config[item.key] : '';
-      }
+      el.value = config[item.key] != null ? config[item.key] : '';
     });
   }
 
+  // --- 类型规范化：旧类型（hls/flv/iframe）回落到 webrtc ---
+  function normalizeType(t) {
+    return t === 'local' ? 'local' : 'webrtc';
+  }
+
   // ====================================================================
-  //  Video Stream List — dynamic add/remove
+  //  监控画面列表 — 动态增删（每个画面含备用流子列表）
   // ====================================================================
 
   function renderStreamList(streams) {
     editingStreams = (streams || []).map(function (s) {
       return {
         url: s.url || '',
-        type: s.type || 'iframe',
+        type: normalizeType(s.type),
         label: s.label || '',
+        backups: (s.backups || []).map(function (b) {
+          return { url: b.url || '', type: normalizeType(b.type) };
+        }),
       };
     });
 
@@ -71,7 +82,7 @@
     row.className = 'stream-row';
     row.id = 'stream-row-' + idx;
 
-    // Header with index + remove button
+    // 标题行：序号 + 删除按钮
     var header = document.createElement('div');
     header.className = 'stream-header';
 
@@ -88,25 +99,75 @@
     header.appendChild(indexLabel);
     header.appendChild(btnRemove);
 
-    // Label field
+    // 画面名称
     var grpLabel = createFieldGroup('画面名称', 'text', 'stream-label-' + idx, stream.label,
       '如：停车场入口 / 停车楼一层');
-    // Type field
-    var grpType = createSelectGroup('视频类型', 'stream-type-' + idx,
-      [
-        { value: 'iframe', text: 'iframe（IP 摄像头网页）' },
-        { value: 'hls', text: 'HLS 视频流（.m3u8）' },
-        { value: 'flv', text: 'HTTP-FLV 视频流（需 MediaMTX）' },
-        { value: 'webrtc', text: 'WebRTC 视频流（超低延迟，支持H.265）' },
-        { value: 'local', text: '本地视频文件（MP4/WebM）' },
-      ],
-      stream.type);
-    // URL field
+    // 主画面类型
+    var grpType = createSelectGroup('视频类型', 'stream-type-' + idx, TYPE_OPTIONS, stream.type);
+    // 主画面地址
     var grpUrl = createFieldGroup('视频地址', 'text', 'stream-url-' + idx, stream.url,
-      'iframe：完整网页地址 | HLS：/hls/xxx/index.m3u8 | FLV：/flv/xxx | WebRTC：/webrtc/xxx | 本地：/videos/xxx.mp4');
+      'WebRTC：/webrtc/xxx（经 Nginx 代理到 MediaMTX） | 本地：/videos/xxx.mp4');
 
     row.appendChild(header);
     row.appendChild(grpLabel);
+    row.appendChild(grpType);
+    row.appendChild(grpUrl);
+
+    // 备用流子列表
+    var backupSection = document.createElement('div');
+    backupSection.className = 'backup-list';
+    backupSection.id = 'backup-list-' + idx;
+
+    var backupTitle = document.createElement('div');
+    backupTitle.className = 'backup-title';
+    backupTitle.textContent = '备用视频流（主画面断流时依次自动切换，主画面恢复 3 分钟后自动切回）';
+    backupSection.appendChild(backupTitle);
+
+    stream.backups.forEach(function (_, bIdx) {
+      backupSection.appendChild(createBackupRow(idx, bIdx));
+    });
+
+    var btnAddBackup = document.createElement('button');
+    btnAddBackup.className = 'btn-add-backup';
+    btnAddBackup.type = 'button';
+    btnAddBackup.textContent = '＋ 添加备用流';
+    btnAddBackup.addEventListener('click', function () { onAddBackup(idx); });
+    backupSection.appendChild(btnAddBackup);
+
+    row.appendChild(backupSection);
+
+    return row;
+  }
+
+  // --- 单条备用流行：序号 + 删除 + 类型 + 地址 ---
+  function createBackupRow(idx, bIdx) {
+    var backup = editingStreams[idx].backups[bIdx];
+    var row = document.createElement('div');
+    row.className = 'backup-row';
+    row.id = 'backup-row-' + idx + '-' + bIdx;
+
+    var header = document.createElement('div');
+    header.className = 'stream-header';
+
+    var indexLabel = document.createElement('span');
+    indexLabel.className = 'backup-index';
+    indexLabel.textContent = '备用流 ' + (bIdx + 1);
+
+    var btnRemove = document.createElement('button');
+    btnRemove.className = 'btn-remove';
+    btnRemove.type = 'button';
+    btnRemove.textContent = '✕ 删除';
+    btnRemove.addEventListener('click', function () { onRemoveBackup(idx, bIdx); });
+
+    header.appendChild(indexLabel);
+    header.appendChild(btnRemove);
+
+    var grpType = createSelectGroup('备用类型', 'backup-type-' + idx + '-' + bIdx,
+      TYPE_OPTIONS, backup.type);
+    var grpUrl = createFieldGroup('备用地址', 'text', 'backup-url-' + idx + '-' + bIdx,
+      backup.url, 'WebRTC：/webrtc/xxx | 本地：/videos/xxx.mp4');
+
+    row.appendChild(header);
     row.appendChild(grpType);
     row.appendChild(grpUrl);
 
@@ -166,41 +227,56 @@
   }
 
   function onAddStream() {
-    editingStreams.push({ url: '', type: 'iframe', label: '' });
-    refreshStreamList();
-  }
-
-  function onRemoveStream(idx) {
-    editingStreams.splice(idx, 1);
-    refreshStreamList();
-  }
-
-  function refreshStreamList() {
-    // Read current values from DOM before re-rendering
     collectStreamValues();
+    editingStreams.push({ url: '', type: 'webrtc', label: '', backups: [] });
     renderStreamList(editingStreams);
   }
 
+  function onRemoveStream(idx) {
+    collectStreamValues();
+    editingStreams.splice(idx, 1);
+    renderStreamList(editingStreams);
+  }
+
+  function onAddBackup(idx) {
+    collectStreamValues();
+    editingStreams[idx].backups.push({ url: '', type: 'webrtc' });
+    renderStreamList(editingStreams);
+  }
+
+  function onRemoveBackup(idx, bIdx) {
+    collectStreamValues();
+    editingStreams[idx].backups.splice(bIdx, 1);
+    renderStreamList(editingStreams);
+  }
+
+  // --- 重新渲染前先从 DOM 收集当前值，避免丢失未保存的编辑 ---
   function collectStreamValues() {
-    // Update editingStreams from current DOM inputs
-    editingStreams.forEach(function (_, idx) {
+    editingStreams.forEach(function (stream, idx) {
       var urlEl = document.getElementById('stream-url-' + idx);
       var typeEl = document.getElementById('stream-type-' + idx);
       var labelEl = document.getElementById('stream-label-' + idx);
-      if (urlEl) editingStreams[idx].url = urlEl.value;
-      if (typeEl) editingStreams[idx].type = typeEl.value;
-      if (labelEl) editingStreams[idx].label = labelEl.value;
+      if (urlEl) stream.url = urlEl.value;
+      if (typeEl) stream.type = typeEl.value;
+      if (labelEl) stream.label = labelEl.value;
+
+      stream.backups.forEach(function (backup, bIdx) {
+        var bUrlEl = document.getElementById('backup-url-' + idx + '-' + bIdx);
+        var bTypeEl = document.getElementById('backup-type-' + idx + '-' + bIdx);
+        if (bUrlEl) backup.url = bUrlEl.value;
+        if (bTypeEl) backup.type = bTypeEl.value;
+      });
     });
   }
 
   // ====================================================================
-  //  Save / Reset
+  //  保存 / 重置
   // ====================================================================
 
   function collectForm() {
     var config = {};
 
-    // Simple fields
+    // 简单字段
     FIELD_MAP.forEach(function (item) {
       var el = document.getElementById(item.id);
       if (!el) return;
@@ -211,13 +287,19 @@
       }
     });
 
-    // Video streams — read current DOM values first
+    // 监控画面列表 — 先从 DOM 读取最新值
     collectStreamValues();
     config.videoStreams = editingStreams.map(function (s) {
       return {
         url: s.url || '',
-        type: s.type || 'iframe',
+        type: s.type || 'webrtc',
         label: s.label || '',
+        // 过滤掉地址为空的备用流
+        backups: (s.backups || []).filter(function (b) {
+          return b.url && b.url.trim();
+        }).map(function (b) {
+          return { url: b.url, type: b.type || 'webrtc' };
+        }),
       };
     });
 
