@@ -562,3 +562,10 @@ html, body {
 .back-link:hover {
   text-decoration: underline;
 }
+
+/* 诊断仪表盘基础样式 */
+.diag-body {
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow-y: auto;
+}

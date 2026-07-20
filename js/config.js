@@ -64,6 +64,7 @@ function getConfig() {
     }
   } catch (e) {
     console.warn('Failed to read config from localStorage, using defaults.', e);
+    if (typeof Diag !== 'undefined') Diag.warn('system', '配置读取失败', {error: e.message});
   }
   return { ...DEFAULT_CONFIG };
 }
@@ -78,6 +79,7 @@ function saveConfig(config) {
     console.log('Config saved.');
   } catch (e) {
     console.error('Failed to save config.', e);
+    if (typeof Diag !== 'undefined') Diag.error('system', '配置保存失败', {error: e.message});
   }
 }
 
@@ -90,5 +92,6 @@ function resetConfig() {
     console.log('Config reset to defaults.');
   } catch (e) {
     console.error('Failed to reset config.', e);
+    if (typeof Diag !== 'undefined') Diag.error('system', '配置重置失败', {error: e.message});
   }
 }

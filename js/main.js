@@ -52,6 +52,9 @@
   var RECOVERY_CHECK_MS = 15000;           // 每 15 秒探测一次主画面
   var FAILOVER_COOLDOWN_MS = 3000;         // 两次故障切换之间的最小间隔
 
+  // 故障切换计数器（供诊断仪表盘使用）
+  var failoverStats = { total: 0, freezes: 0 };
+
   // --- Init ---
   function init() {
     config = getConfig();
@@ -198,6 +201,7 @@
       }
     }).catch(function (err) {
       console.error('Failed to fetch ad video list:', err);
+      Diag.error('ad', '广告视频列表获取失败', {error: err.message, folder: folder});
       adFileList = [];
     });
   }
@@ -226,9 +230,12 @@
       currentVideoEl.onerror = function () {
         if (videoState !== 'camera') return; // 广告的错误由专属回调处理
         console.error('本地视频加载失败，触发故障切换: ' + source.url);
+        Diag.error('video', '本地视频加载失败', {url: source.url, cameraIndex: currentCameraIndex, backupIndex: currentBackupIndex});
         failoverCamera();
       };
-      currentVideoEl.play().catch(function () { /* 已静音，正常不会被自动播放策略拦截 */ });
+      currentVideoEl.play().catch(function (e) {
+        Diag.warn('video', '自动播放被浏览器拦截', {url: source.url, error: e ? e.message : 'unknown'});
+      });
     }
 
     videoState = 'camera';
@@ -243,6 +250,7 @@
       pc = new RTCPeerConnection({ iceServers: [] });
     } catch (e) {
       console.error('WebRTC not supported:', e);
+      Diag.error('video', 'WebRTC不支持', {error: e.message});
       return;
     }
 
@@ -254,7 +262,9 @@
       if (event.track.kind === 'video' && !hasVideo) {
         hasVideo = true;
         video.srcObject = event.streams[0];
-        video.play().catch(function () { /* 已静音，正常不会被自动播放策略拦截 */ });
+        video.play().catch(function (e) {
+          Diag.warn('video', 'WebRTC自动播放被浏览器拦截', {url: url, error: e ? e.message : 'unknown'});
+        });
       }
     };
 
@@ -262,10 +272,12 @@
       if (pc !== currentPlayer) return; // 旧会话残留的 pc，忽略其事件
       if (pc.connectionState === 'failed') {
         console.error('WebRTC 连接失败，触发故障切换');
+        Diag.error('video', 'WebRTC连接失败', {url: url, connectionState: pc.connectionState, cameraIndex: currentCameraIndex});
         failoverCamera();
       } else if (pc.connectionState === 'disconnected') {
         // disconnected 常可自行恢复；若未恢复，由帧数看门狗兜底
         console.warn('WebRTC connection disconnected');
+        Diag.warn('video', 'WebRTC连接断开', {url: url, connectionState: pc.connectionState});
       }
     };
 
@@ -284,6 +296,7 @@
       return pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
     }).catch(function (err) {
       console.error('WebRTC/WHEP 握手失败:', err);
+      Diag.error('video', 'WHEP握手失败', {url: url, error: err.message, cameraIndex: currentCameraIndex});
       if (pc === currentPlayer) failoverCamera();
     });
 
@@ -311,11 +324,15 @@
     var cam = cameraList[currentCameraIndex];
     var backups = cam.backups || [];
 
+    failoverStats.total++;
+
     if (currentBackupIndex + 1 < backups.length) {
       // 还有备用流可用：切换到下一个备用
       currentBackupIndex++;
+      var label = cam.label || '画面' + (currentCameraIndex + 1);
       console.warn('画面断流，切换到备用流 ' + (currentBackupIndex + 1) + '/' + backups.length +
-                   '（' + (cam.label || '画面' + (currentCameraIndex + 1)) + '）');
+                   '（' + label + '）');
+      Diag.warn('video', '故障切换-使用备用流', {cameraIndex: currentCameraIndex, backupIndex: currentBackupIndex, label: label, url: backups[currentBackupIndex].url});
       playCameraStream(getCurrentSource());
       startRecoveryCheck();   // 开始探测主画面是否恢复
       return;
@@ -324,10 +341,12 @@
     if (cameraList.length > 1) {
       // 备用用尽（或没有备用）：切换到下一个摄像头的主画面
       stopRecoveryCheck();
+      var fromIndex = currentCameraIndex;
       currentCameraIndex = (currentCameraIndex + 1) % cameraList.length;
       currentBackupIndex = -1;
       var next = cameraList[currentCameraIndex];
       console.warn('备用流用尽，切换到下一个摄像头: ' + (next.label || '画面' + (currentCameraIndex + 1)));
+      Diag.warn('video', '故障切换-切换摄像头', {fromIndex: fromIndex, toIndex: currentCameraIndex, label: next.label || ''});
       playCameraStream(getCurrentSource());
       return;
     }
@@ -338,10 +357,12 @@
       stopRecoveryCheck();
       currentBackupIndex = -1;
       console.warn('备用流用尽，回到主画面重试');
+      Diag.warn('video', '故障切换-重试主画面', {cameraIndex: currentCameraIndex});
       playCameraStream(getCurrentSource());
     } else {
       // 无备用：延迟 1 秒原地重建（配合冷却与看门狗自然限速）
       console.warn('画面断流，1 秒后原地重建');
+      Diag.warn('video', '故障切换-原地重建', {cameraIndex: currentCameraIndex});
       scheduleRebuildCurrent(1000);
     }
   }
@@ -355,6 +376,7 @@
       var source = getCurrentSource();
       if (!source) return;
       console.log('重建视频会话:', source.url);
+      Diag.info('video', '重建视频会话', {url: source.url, cameraIndex: currentCameraIndex});
       playCameraStream(source);
     }, delayMs);
   }
@@ -371,13 +393,17 @@
         // 异步探测返回时可能已切走或探测已停止
         if (recoveryCheckId === null || currentBackupIndex < 0) return;
         if (!ok) {
-          if (recoveryStableSince !== 0) console.log('主画面探测中断，重新计时');
+          if (recoveryStableSince !== 0) {
+            console.log('主画面探测中断，重新计时');
+            Diag.info('video', '主画面探测中断', {cameraIndex: currentCameraIndex});
+          }
           recoveryStableSince = 0;
           return;
         }
         if (recoveryStableSince === 0) {
           recoveryStableSince = Date.now();
           console.log('主画面探测可达，进入 3 分钟稳定观察期');
+          Diag.info('video', '主画面探测可达', {cameraIndex: currentCameraIndex});
           return;
         }
         if (Date.now() - recoveryStableSince >= RECOVERY_STABLE_MS) {
@@ -400,7 +426,9 @@
   function probeStream(url, type) {
     return fetch(url, { method: 'HEAD', cache: 'no-store' }).then(function (resp) {
       return resp.ok;
-    }).catch(function () {
+    }).catch(function (err) {
+      // 记录探测失败类型（但不改变函数返回值，保持现有逻辑）
+      Diag.warn('video', '主画面探测失败', {url: url, error: err.message || 'network error'});
       return false;
     });
   }
@@ -411,6 +439,7 @@
     currentBackupIndex = -1;
     if (videoState !== 'camera') return;  // 广告态防御（探测在广告期间本应已停止）
     console.log('主画面已稳定恢复 3 分钟，切回主画面');
+    Diag.info('video', '主画面恢复', {cameraIndex: currentCameraIndex});
     playCameraStream(getCurrentSource());
   }
 
@@ -440,6 +469,8 @@
         stallChecks++;
         if (stallChecks >= 2) {   // 约 20 秒无新帧
           console.error('画面冻结（约 20 秒无新帧），触发故障切换');
+          Diag.error('video', '画面冻结', {cameraIndex: currentCameraIndex, stallChecks: stallChecks});
+          failoverStats.freezes++;
           stallChecks = 0;
           failoverCamera();
         }
@@ -471,12 +502,14 @@
     if (interval <= 0 || cameraList.length <= 1) return;
 
     console.log('摄像头轮播: 每 ' + interval + ' 秒切换（共 ' + cameraList.length + ' 个画面）');
+    Diag.info('video', '摄像头轮播启动', {interval: interval, cameraCount: cameraList.length});
     cameraRotateTimerId = setInterval(function () {
       if (videoState !== 'camera') return;  // 广告播放期间不切换
       stopRecoveryCheck();                   // 切走后不再探测上一个摄像头的主画面
       currentCameraIndex = (currentCameraIndex + 1) % cameraList.length;
       currentBackupIndex = -1;               // 新摄像头从主画面开始
       console.log('轮播切换到画面 ' + (currentCameraIndex + 1) + '/' + cameraList.length);
+      Diag.info('video', '轮播切换', {toIndex: currentCameraIndex, total: cameraList.length});
       playCameraStream(getCurrentSource());
     }, interval * 1000);
   }
@@ -497,6 +530,7 @@
     stopCameraTimer();
     var duration = (config.cameraDuration || 300);
     console.log('Camera timer: ' + duration + 's until next ad video');
+    Diag.info('ad', '摄像头计时器启动', {duration: duration});
     cameraTimerId = setTimeout(function () {
       switchToAdVideo();
     }, duration * 1000);
@@ -546,14 +580,17 @@
     // 显式 play() — 仅靠 autoplay 在切换 src 时可能不触发
     currentVideoEl.play().catch(function (err) {
       console.error('Ad video play() rejected:', err.message);
+      Diag.error('ad', '广告视频自动播放被拒', {filename: filename, error: err.message});
     });
 
     videoState = 'ad';
     console.log('Playing ad video (' + (currentAdIndex + 1) + '/' + adFileList.length + '): ' + filename);
+    Diag.info('ad', '播放广告视频', {filename: filename, index: currentAdIndex + 1, total: adFileList.length});
   }
 
   function onAdVideoEnded() {
     console.log('Ad video ended, switching back to camera');
+    Diag.info('ad', '广告视频播放结束', {index: currentAdIndex + 1, total: adFileList.length});
     currentAdIndex = (currentAdIndex + 1) % adFileList.length;
     switchToCamera();
   }
@@ -563,6 +600,7 @@
     var code = el && el.error ? el.error.code : 'unknown';
     var msg = el && el.error ? el.error.message : 'unknown';
     console.error('Ad video error (code=' + code + '): ' + msg + ' — src=' + (el ? el.src : ''));
+    Diag.error('ad', '广告视频播放错误', {code: code, message: msg, src: el ? el.src : ''});
     currentAdIndex = (currentAdIndex + 1) % adFileList.length;
     switchToCamera();
   }
@@ -648,6 +686,7 @@
     var interval = Math.max(1, config.pollInterval || 2) * 1000;
     pollTimerId = setInterval(fetchStatus, interval);
     console.log('Data polling every ' + (config.pollInterval || 2) + 's');
+    Diag.info('data', '数据轮询启动', {interval: config.pollInterval || 2});
   }
 
   function stopPolling() {
@@ -659,7 +698,11 @@
 
   async function fetchStatus() {
     try {
-      var resp = await fetch('/api/parking/status');
+      // 30 秒超时控制
+      var controller = new AbortController();
+      var timeoutId = setTimeout(function () { controller.abort(); }, 30000);
+      var resp = await fetch('/api/parking/status', { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var data = await resp.json();
 
@@ -688,7 +731,9 @@
       }
 
     } catch (e) {
+      clearTimeout(timeoutId);
       console.error('Status poll failed:', e);
+      Diag.error('data', '数据轮询失败', {error: e.message, consecutiveFailures: consecutiveFailures + 1});
       consecutiveFailures++;
       if (consecutiveFailures >= MAX_FAILURES) {
         lastData = { total: null, availTotal: null };
@@ -741,6 +786,7 @@
   window.addEventListener('storage', function (e) {
     if (e.key === 'parking_display_config') {
       console.log('Config changed, reloading...');
+      Diag.info('system', '配置热重载', {source: 'storage event'});
       config = getConfig();
       applyConfig();
       startPolling();               // restart poll timer with new interval
