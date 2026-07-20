@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>大屏运行诊断</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* 仪表盘专用样式（补充 style.css） */
+    .diag-body {
+      background: #0f172a;
+      color: #e2e8f0;
+      overflow-y: auto;
+      font-family: 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', sans-serif;
+    }
+    .diag-wrapper {
+      max-width: 960px;
+      margin: 30px auto;
+      padding: 20px;
+    }
+    .diag-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .diag-header h1 {
+      color: #06b6d4;
+      font-size: 24px;
+      margin: 0;
+    }
+    .diag-header .date-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .diag-header input[type="date"] {
+      padding: 6px 12px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    .diag-header input[type="date"]:focus {
+      border-color: #06b6d4;
+      outline: none;
+    }
+
+    /* 概览卡片 */
+    .status-cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 640px) {
+      .status-cards { grid-template-columns: repeat(2, 1fr); }
+    }
+    .status-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+    .status-card .card-label {
+      font-size: 12px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 6px;
+    }
+    .status-card .card-value {
+      font-size: 36px;
+      font-weight: 800;
+    }
+    .status-card.error .card-value { color: #ef4444; }
+    .status-card.warn .card-value  { color: #f59e0b; }
+    .status-card.info .card-value  { color: #06b6d4; }
+    .status-card.total .card-value { color: #e2e8f0; }
+
+    /* 健康状态横幅 */
+    .health-banner {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .health-dot {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .health-dot.ok       { background: #10b981; box-shadow: 0 0 12px rgba(16,185,129,0.5); }
+    .health-dot.degraded { background: #f59e0b; box-shadow: 0 0 12px rgba(245,158,11,0.5); }
+    .health-dot.error    { background: #ef4444; box-shadow: 0 0 12px rgba(239,68,68,0.5); }
+    .health-text { flex: 1; }
+    .health-text .status-label { font-size: 18px; font-weight: 700; }
+    .health-text .status-detail { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+    .health-warning {
+      background: rgba(245,158,11,0.1);
+      border: 1px solid rgba(245,158,11,0.3);
+      color: #f59e0b;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    /* 筛选栏 */
+    .filter-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filter-bar button {
+      padding: 6px 16px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #94a3b8;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.2s;
+    }
+    .filter-bar button:hover { border-color: #06b6d4; color: #e2e8f0; }
+    .filter-bar button.active { background: #06b6d4; color: #fff; border-color: #06b6d4; }
+    .filter-bar .filter-spacer { flex: 1; }
+    .filter-bar .auto-refresh { font-size: 12px; color: #64748b; }
+
+    /* 时间线 */
+    .timeline {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .timeline-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #334155;
+      font-size: 14px;
+      font-weight: 700;
+      color: #06b6d4;
+    }
+    .timeline-list { max-height: 480px; overflow-y: auto; }
+    .timeline-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(51,65,85,0.5);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .timeline-item:last-child { border-bottom: none; }
+    .timeline-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+    .timeline-dot.error { background: #ef4444; }
+    .timeline-dot.warn  { background: #f59e0b; }
+    .timeline-dot.info  { background: #06b6d4; }
+    .timeline-time {
+      color: #64748b;
+      font-size: 12px;
+      white-space: nowrap;
+      min-width: 70px;
+      font-family: 'Consolas', 'Courier New', monospace;
+    }
+    .timeline-cat {
+      background: #334155;
+      color: #94a3b8;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .timeline-msg { flex: 1; color: #cbd5e1; word-break: break-all; }
+
+    .timeline-empty {
+      padding: 40px 16px;
+      text-align: center;
+      color: #475569;
+      font-size: 14px;
+    }
+
+    /* 摄像头统计 */
+    .camera-stats {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+    }
+    .camera-stats h3 {
+      color: #06b6d4;
+      font-size: 14px;
+      margin: 0 0 12px 0;
+    }
+    .camera-stat-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(51,65,85,0.4);
+      font-size: 13px;
+    }
+    .camera-stat-row:last-child { border-bottom: none; }
+    .camera-stat-name { color: #e2e8f0; }
+    .camera-stat-nums { color: #94a3b8; font-family: 'Consolas', 'Courier New', monospace; }
+    .camera-stat-nums span { margin-left: 16px; }
+    .camera-stat-nums .bad { color: #ef4444; }
+    .camera-stat-nums .good { color: #10b981; }
+
+    /* 底部导航 */
+    .diag-footer {
+      text-align: center;
+      margin-top: 20px;
+    }
+    .diag-footer a {
+      color: #06b6d4;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .diag-footer a:hover { text-decoration: underline; }
+
+    /* 加载状态 */
+    .loading {
+      text-align: center;
+      color: #64748b;
+      padding: 40px;
+    }
+  </style>
+</head>
+<body class="diag-body">
+  <div class="diag-wrapper">
+
+    <!-- 头部 -->
+    <div class="diag-header">
+      <h1>🏥 大屏运行诊断</h1>
+      <div class="date-row">
+        <input type="date" id="date-picker">
+        <span style="color:#64748b;font-size:13px;" id="server-time"></span>
+      </div>
+    </div>
+
+    <!-- 概览卡片 -->
+    <div class="status-cards" id="kpi-cards">
+      <div class="status-card error">
+        <div class="card-label">错误</div>
+        <div class="card-value" id="kpi-errors">--</div>
+      </div>
+      <div class="status-card warn">
+        <div class="card-label">警告</div>
+        <div class="card-value" id="kpi-warns">--</div>
+      </div>
+      <div class="status-card info">
+        <div class="card-label">信息</div>
+        <div class="card-value" id="kpi-infos">--</div>
+      </div>
+      <div class="status-card total">
+        <div class="card-label">总计</div>
+        <div class="card-value" id="kpi-total">--</div>
+      </div>
+    </div>
+
+    <!-- 健康状态 -->
+    <div class="health-banner" id="health-banner">
+      <div class="health-dot" id="health-dot"></div>
+      <div class="health-text">
+        <div class="status-label" id="health-label">加载中...</div>
+        <div class="status-detail" id="health-detail"></div>
+      </div>
+    </div>
+
+    <!-- 筛选栏 -->
+    <div class="filter-bar">
+      <button class="active" data-level="">全部</button>
+      <button data-level="error">🔴 错误</button>
+      <button data-level="warn">🟡 警告</button>
+      <button data-level="info">🔵 信息</button>
+      <span class="filter-spacer"></span>
+      <label class="auto-refresh">
+        <input type="checkbox" id="auto-refresh"> 自动刷新 (10s)
+      </label>
+    </div>
+
+    <!-- 事件时间线 -->
+    <div class="timeline">
+      <div class="timeline-header">📋 事件时间线 <span id="timeline-count" style="color:#64748b;font-weight:400;"></span></div>
+      <div class="timeline-list" id="timeline-list">
+        <div class="timeline-empty">加载中...</div>
+      </div>
+    </div>
+
+    <!-- 摄像头统计 -->
+    <div class="camera-stats" id="camera-stats-section" style="display:none;">
+      <h3>📹 摄像头切换详情</h3>
+      <div id="camera-stats-list"></div>
+    </div>
+
+    <!-- 底栏 -->
+    <div class="diag-footer">
+      <a href="admin.html">⚙ 配置管理</a> &nbsp;|&nbsp;
+      <a href="index.html">🖥 返回大屏</a>
+    </div>
+
+  </div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    var currentLevel = '';
+    var autoRefreshTimer = null;
+
+    // 设置今天日期
+    var today = new Date().toISOString().split('T')[0];
+    var dp = document.getElementById('date-picker');
+    dp.value = today;
+    dp.addEventListener('change', loadAll);
+
+    // 筛选按钮
+    document.querySelectorAll('.filter-bar button[data-level]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('.filter-bar button[data-level]').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        currentLevel = btn.dataset.level;
+        loadEvents();
+      });
+    });
+
+    // 自动刷新
+    var autoRefreshEl = document.getElementById('auto-refresh');
+    autoRefreshEl.addEventListener('change', function () {
+      if (autoRefreshEl.checked) {
+        autoRefreshTimer = setInterval(loadAll, 10000);
+      } else {
+        if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+      }
+    });
+
+    // --- 加载所有数据 ---
+    function loadAll() {
+      loadHealth();
+      loadSummary();
+      loadEvents();
+    }
+
+    // --- 健康检查 ---
+    function loadHealth() {
+      fetch('/api/health').then(function (r) { return r.json(); }).then(function (data) {
+        var dot = document.getElementById('health-dot');
+        var label = document.getElementById('health-label');
+        var detail = document.getElementById('health-detail');
+        var banner = document.getElementById('health-banner');
+
+        dot.className = 'health-dot ' + (data.status || 'ok');
+        var statusText = { ok: '✅ 系统正常', degraded: '⚠️ 部分异常', error: '❌ 严重异常' };
+        label.textContent = statusText[data.status] || data.status;
+
+        var uptime = data.uptime || 0;
+        var h = Math.floor(uptime / 3600);
+        var m = Math.floor((uptime % 3600) / 60);
+        var parts = ['运行 ' + h + 'h ' + m + 'm'];
+        if (data.errorsToday) parts.push('今日错误: ' + data.errorsToday);
+        if (data.failoversToday) parts.push('故障切换: ' + data.failoversToday);
+        detail.textContent = parts.join(' | ') + ' | 服务器时间: ' + (data.serverTime || '--');
+
+        // 警告信息
+        var oldWarnings = banner.querySelectorAll('.health-warning');
+        oldWarnings.forEach(function (w) { w.remove(); });
+        if (data.warnings && data.warnings.length > 0) {
+          data.warnings.forEach(function (w) {
+            var span = document.createElement('span');
+            span.className = 'health-warning';
+            span.textContent = w;
+            banner.appendChild(span);
+          });
+        }
+
+        document.getElementById('server-time').textContent = data.serverTime || '';
+      }).catch(function (e) {
+        console.error('健康检查失败:', e);
+      });
+    }
+
+    // --- 摘要 ---
+    function loadSummary() {
+      var date = dp.value;
+      fetch('/api/diagnostics/summary?date=' + encodeURIComponent(date)).then(function (r) {
+        return r.json();
+      }).then(function (data) {
+        var byLevel = data.byLevel || {};
+        document.getElementById('kpi-errors').textContent = byLevel.error || 0;
+        document.getElementById('kpi-warns').textContent = byLevel.warn || 0;
+        document.getElementById('kpi-infos').textContent = byLevel.info || 0;
+        document.getElementById('kpi-total').textContent = data.total || 0;
+
+        // 摄像头统计
+        var camStats = data.cameraStats || {};
+        var camKeys = Object.keys(camStats);
+        var camSection = document.getElementById('camera-stats-section');
+        var camList = document.getElementById('camera-stats-list');
+
+        if (camKeys.length > 0) {
+          camSection.style.display = 'block';
+          camList.innerHTML = '';
+          camKeys.forEach(function (key) {
+            var cs = camStats[key];
+            var row = document.createElement('div');
+            row.className = 'camera-stat-row';
+            row.innerHTML =
+              '<span class="camera-stat-name">' + escHtml(key) + '</span>' +
+              '<span class="camera-stat-nums">' +
+              '故障切换: <span class="' + (cs.failovers > 0 ? 'bad' : 'good') + '">' + cs.failovers + '</span>' +
+              '<span> 冻结: <span class="' + (cs.freezes > 0 ? 'bad' : 'good') + '">' + cs.freezes + '</span></span>' +
+              '</span>';
+            camList.appendChild(row);
+          });
+        } else {
+          camSection.style.display = 'none';
+        }
+      }).catch(function (e) {
+        console.error('摘要加载失败:', e);
+      });
+    }
+
+    // --- 事件列表 ---
+    function loadEvents() {
+      var date = dp.value;
+      var url = '/api/diagnostics?date=' + encodeURIComponent(date) + '&limit=200';
+      if (currentLevel) url += '&level=' + encodeURIComponent(currentLevel);
+
+      fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+        var events = data.events || [];
+        var list = document.getElementById('timeline-list');
+        var countEl = document.getElementById('timeline-count');
+        countEl.textContent = '（' + (data.total || events.length) + ' 条）';
+
+        if (events.length === 0) {
+          list.innerHTML = '<div class="timeline-empty">📭 ' +
+            (date === today ? '今天暂无事件记录' : '该日期暂无事件记录') + '</div>';
+          return;
+        }
+
+        var html = '';
+        events.forEach(function (evt) {
+          var level = evt.level || 'info';
+          var cat = evt.category || 'system';
+          var ts = evt.ts || '';
+          var time = ts.length >= 19 ? ts.substring(11, 19) : (ts.length >= 16 ? ts.substring(11, 16) : ts);
+          var msg = escHtml(evt.message || '');
+
+          html += '<div class="timeline-item">' +
+            '<span class="timeline-dot ' + level + '"></span>' +
+            '<span class="timeline-time">' + escHtml(time) + '</span>' +
+            '<span class="timeline-cat">' + escHtml(cat) + '</span>' +
+            '<span class="timeline-msg">' + msg + '</span>' +
+            '</div>';
+        });
+        list.innerHTML = html;
+      }).catch(function (e) {
+        console.error('事件加载失败:', e);
+        document.getElementById('timeline-list').innerHTML =
+          '<div class="timeline-empty">⚠️ 加载失败，请检查服务是否运行</div>';
+      });
+    }
+
+    function escHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // --- 启动 ---
+    loadAll();
+  })();
+  </script>
+</body>
+</html>
