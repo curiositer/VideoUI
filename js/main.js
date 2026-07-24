@@ -1,6 +1,7 @@
 /* ============================================================
    主屏逻辑 — 轮询本地服务端数据，
    多摄像头轮播 + 主备故障切换 + 广告视频交替播放
+   双 video 元素交叉渐变：消除切换黑屏
    ============================================================ */
 
 (function () {
@@ -28,9 +29,18 @@
   var cameraTimerId = null;        // 切广告的倒计时
   var adFileList = [];             // /api/video-list 返回的广告文件名
   var currentAdIndex = 0;
-  var currentVideoEl = null;       // 共享的 <video> 元素
-  var currentPlayer = null;        // RTCPeerConnection（webrtc 播放时）
   var videoPanel = null;           // 视频容器 div
+
+  // 双 video 元素系统 — 交叉渐变消除切换黑屏
+  // activeVideo: 当前可见（video-active class, opacity:1 z-index:2）
+  // standbyVideo: 隐藏预加载（video-standby class, opacity:0 z-index:1）
+  // 切换时在 standby 上连接新流，就绪后 CSS 0.5s 渐变 → 交换引用
+  var activeVideo = null;
+  var standbyVideo = null;
+  var activePlayer = null;         // activeVideo 的 RTCPeerConnection
+  var standbyPlayer = null;        // standbyVideo 的 RTCPeerConnection
+  var switchLocked = false;        // 防止并发切换
+  var crossfadeTimerId = null;     // CSS 渐变完成定时器（用于取消冲突）
 
   // 摄像头列表 / 轮播 / 主备切换状态
   var cameraList = [];             // buildCameraList 产物 [{url, type, label, backups:[...]}]
@@ -42,10 +52,8 @@
   var failoverCooldownUntil = 0;   // 故障切换冷却截止时间戳
   var rebuildTimerId = null;       // 原地重建（单摄像头无备用）的延迟定时器
 
-  // 帧数看门狗（webrtc / local 通用）
+  // 帧数看门狗（仅监控 activeVideo）
   var cameraWatchdogId = null;
-  var stallChecks = 0;             // 连续检测到无新帧的次数
-  var lastFrameCount = -1;
 
   // 故障切换 / 恢复探测常量
   var RECOVERY_STABLE_MS = 3 * 60 * 1000;  // 主画面持续可达 3 分钟视为恢复正常
@@ -71,7 +79,7 @@
   }
 
   // ====================================================================
-  //  视频系统 — 多摄像头轮播 + 主备故障切换 + 广告交替播放
+  //  视频系统 — 双 video 元素交叉渐变 + 多摄像头轮播 + 主备故障切换 + 广告交替播放
   // ====================================================================
 
   // --- 构建有效摄像头列表（仅接受 webrtc / local 两种类型） ---
@@ -118,140 +126,84 @@
     return { url: cam.url, type: cam.type };
   }
 
-  function setupVideoSystem(cfg) {
-    var area = els.videoArea;
-    var placeholder = els.placeholder;
-    if (!area) return;
+  // ====================================================================
+  //  双 video 元素管理
+  // ====================================================================
 
-    var newList = buildCameraList(cfg.videoStreams);
-
-    if (newList.length === 0) {
-      // 无有效摄像头 — 完全清理
-      cleanupVideoSystem();
-      if (videoPanel) { videoPanel.remove(); videoPanel = null; currentVideoEl = null; }
-      cameraList = [];
-      currentCameraIndex = 0;
-      currentBackupIndex = -1;
-      if (placeholder) placeholder.style.display = 'flex';
-      return;
-    }
-
-    if (placeholder) placeholder.style.display = 'none';
-
-    var listChanged = !listsEqual(cameraList, newList);
-
-    // 软清理：停所有定时器、重置广告状态（列表未变时保留播放器与 DOM）
-    cleanupVideoSystem(!listChanged);
-
-    cameraList = newList;
-
-    // 创建面板 + video 元素（若不存在）
+  // --- 初始化两个 video 元素（active 在上层，standby 在下层） ---
+  function initVideoElements() {
     if (!videoPanel || !videoPanel.parentNode) {
       videoPanel = document.createElement('div');
       videoPanel.className = 'video-panel';
       videoPanel.id = 'video-panel-main';
-
-      currentVideoEl = document.createElement('video');
-      currentVideoEl.autoplay = true;
-      currentVideoEl.muted = true;
-      currentVideoEl.playsInline = true;
-      currentVideoEl.loop = true;
-      videoPanel.appendChild(currentVideoEl);
-      area.appendChild(videoPanel);
-
-      listChanged = true; // 新建元素，必须重建播放器
+      els.videoArea.appendChild(videoPanel);
     }
 
-    if (listChanged) {
-      // 列表有变化：从第一个摄像头的主画面开始播放
-      currentCameraIndex = 0;
-      currentBackupIndex = -1;
-      playCameraStream(getCurrentSource());
-    } else if (currentBackupIndex >= 0) {
-      // 列表未变且正在使用备用流：恢复探测被软清理停掉了，重新启动
-      startRecoveryCheck();
+    if (activeVideo && activeVideo.parentNode === videoPanel &&
+        standbyVideo && standbyVideo.parentNode === videoPanel) {
+      return; // 已初始化
     }
 
-    // 多画面轮播
-    startCameraRotateTimer();
+    videoPanel.innerHTML = '';
 
-    // 广告目录（留空 = 禁用广告轮播，仅摄像头）
-    var folder = cfg.videoFolder || '';
-    if (folder) {
-      fetchAdFileList(folder);
-    } else {
-      adFileList = [];
-      console.log('Video folder not configured, camera-only mode');
-    }
+    // 先创建 standby（在下层）
+    standbyVideo = document.createElement('video');
+    standbyVideo.autoplay = true;
+    standbyVideo.muted = true;
+    standbyVideo.playsInline = true;
+    standbyVideo.loop = true;
+    standbyVideo.className = 'video-standby';
+    videoPanel.appendChild(standbyVideo);
+
+    // 再创建 active（在上层）
+    activeVideo = document.createElement('video');
+    activeVideo.autoplay = true;
+    activeVideo.muted = true;
+    activeVideo.playsInline = true;
+    activeVideo.loop = true;
+    activeVideo.className = 'video-active';
+    videoPanel.appendChild(activeVideo);
   }
 
-  // --- 从服务端获取广告视频文件列表 ---
-  function fetchAdFileList(folder) {
-    var url = '/api/video-list?folder=' + encodeURIComponent(folder);
-    fetch(url).then(function (resp) {
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      return resp.json();
-    }).then(function (files) {
-      adFileList = files || [];
-      if (adFileList.length > 0) {
-        console.log('Ad videos found: ' + adFileList.length + ' files');
-        startCameraTimer();
-      } else {
-        console.log('No ad videos in folder, showing camera only');
-      }
-    }).catch(function (err) {
-      console.error('Failed to fetch ad video list:', err);
-      Diag.error('ad', '广告视频列表获取失败', {error: err.message, folder: folder});
-      adFileList = [];
-    });
+  // --- 判断视频元素是否正在播放内容 ---
+  function isVideoPlaying(video) {
+    if (!video) return false;
+    var hasSrc = video.src && video.src !== '' && video.src !== window.location.href;
+    var hasStream = !!(video.srcObject && video.srcObject.active);
+    return (hasSrc || hasStream) && video.readyState >= 2;
   }
 
-  // --- 在共享 <video> 元素上播放摄像头源（webrtc 或 local） ---
-  function playCameraStream(source) {
-    if (!currentVideoEl) {
-      rebuildVideoElement();
-    }
-    if (!currentVideoEl || !source) return;
-
-    // 销毁现有播放器（含看门狗、待执行的重建）
-    destroyPlayer();
-
-    currentVideoEl.loop = true;
-    currentVideoEl.src = '';
-    currentVideoEl.srcObject = null;
-    currentVideoEl.onended = null;
-    currentVideoEl.onerror = null;
-
-    if (source.type === 'webrtc') {
-      setupWebrtcOnVideo(currentVideoEl, source.url);
-    } else {
-      // local 本地视频文件，循环播放
-      currentVideoEl.src = source.url;
-      currentVideoEl.onerror = function () {
-        if (videoState !== 'camera') return; // 广告的错误由专属回调处理
-        console.error('本地视频加载失败，触发故障切换: ' + source.url);
-        Diag.error('video', '本地视频加载失败', {url: source.url, cameraIndex: currentCameraIndex, backupIndex: currentBackupIndex});
-        failoverCamera();
-      };
-      currentVideoEl.play().catch(function (e) {
-        Diag.warn('video', '自动播放被浏览器拦截', {url: source.url, error: e ? e.message : 'unknown'});
-      });
-    }
-
-    videoState = 'camera';
-    // 统一启动帧数看门狗（webrtc / local 通用）
-    startCameraWatchdog(currentVideoEl);
+  // --- 重置指定 video 元素（清空 src/srcObject/事件回调） ---
+  function resetSlotVideo(video) {
+    if (!video) return;
+    video.onended = null;
+    video.onerror = null;
+    video.loop = true;
+    video.src = '';
+    video.srcObject = null;
   }
 
-  // --- 在已有 <video> 元素上建立 WebRTC 播放 ---
-  function setupWebrtcOnVideo(video, url) {
+  // --- 安全关闭 RTCPeerConnection ---
+  function closePlayer(pc) {
+    if (!pc) return;
+    try {
+      if (pc.close) pc.close();
+    } catch (e) { /* 忽略 */ }
+  }
+
+  // ====================================================================
+  //  WebRTC 连接工厂（接受任意 video 元素 + 错误回调）
+  // ====================================================================
+
+  function _createWebrtcConnection(video, url, onError) {
     var pc = null;
     try {
       pc = new RTCPeerConnection({ iceServers: [] });
     } catch (e) {
       console.error('WebRTC not supported:', e);
       Diag.error('video', 'WebRTC不支持', {error: e.message});
-      return;
+      if (typeof onError === 'function') onError(e);
+      return null;
     }
 
     pc.addTransceiver('video', { direction: 'recvonly' });
@@ -269,14 +221,16 @@
     };
 
     pc.onconnectionstatechange = function () {
-      if (pc !== currentPlayer) return; // 旧会话残留的 pc，忽略其事件
       if (pc.connectionState === 'failed') {
-        console.error('WebRTC 连接失败，触发故障切换');
-        Diag.error('video', 'WebRTC连接失败', {url: url, connectionState: pc.connectionState, cameraIndex: currentCameraIndex});
-        failoverCamera();
+        console.error('WebRTC 连接失败: ' + url);
+        Diag.error('video', 'WebRTC连接失败', {url: url, connectionState: pc.connectionState});
+        if (pc === activePlayer) {
+          failoverCamera();
+        } else if (typeof onError === 'function') {
+          onError('connection-failed');
+        }
       } else if (pc.connectionState === 'disconnected') {
-        // disconnected 常可自行恢复；若未恢复，由帧数看门狗兜底
-        console.warn('WebRTC connection disconnected');
+        console.warn('WebRTC 连接断开: ' + url);
         Diag.warn('video', 'WebRTC连接断开', {url: url, connectionState: pc.connectionState});
       }
     };
@@ -296,11 +250,176 @@
       return pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
     }).catch(function (err) {
       console.error('WebRTC/WHEP 握手失败:', err);
-      Diag.error('video', 'WHEP握手失败', {url: url, error: err.message, cameraIndex: currentCameraIndex});
-      if (pc === currentPlayer) failoverCamera();
+      Diag.error('video', 'WHEP握手失败', {url: url, error: err.message});
+      if (pc === activePlayer) {
+        failoverCamera();
+      } else if (typeof onError === 'function') {
+        onError(err);
+      }
     });
 
-    currentPlayer = pc;
+    return pc;
+  }
+
+  // ====================================================================
+  //  核心：交叉渐变切换
+  // ====================================================================
+
+  // --- CSS 渐变：active 淡出 + standby 淡入（0.5s），然后交换引用 ---
+  function execCrossfade(onComplete) {
+    if (!activeVideo || !standbyVideo) return;
+
+    // 淡出旧 active
+    activeVideo.classList.remove('video-active');
+    activeVideo.classList.add('video-standby');
+
+    // 淡入 standby
+    standbyVideo.classList.remove('video-standby');
+    standbyVideo.classList.add('video-active');
+
+    // 等 CSS transition 完成（0.5s）
+    if (crossfadeTimerId) clearTimeout(crossfadeTimerId);
+    crossfadeTimerId = setTimeout(function () {
+      crossfadeTimerId = null;
+
+      // 保存旧 active 引用
+      var oldVideo = activeVideo;
+      var oldPlayer = activePlayer;
+
+      // 交换引用：standby → active，旧 active → 新 standby
+      activeVideo = standbyVideo;
+      activePlayer = standbyPlayer;
+      standbyVideo = oldVideo;
+      standbyPlayer = null;
+
+      // 销毁旧 active 的资源
+      closePlayer(oldPlayer);
+      resetSlotVideo(standbyVideo);
+
+      switchLocked = false;
+
+      // 启动新 active 的帧数看门狗
+      startCameraWatchdog();
+
+      if (typeof onComplete === 'function') onComplete();
+    }, 500);
+  }
+
+  // --- 在 standby 上播放指定源，就绪后渐变切换 ---
+  // 如果 active 尚无内容（首次加载），直接在 active 上播放，跳过渐变
+  function playStreamOnStandby(source, onComplete) {
+    if (!source) return;
+
+    if (!standbyVideo || !activeVideo) {
+      initVideoElements();
+    }
+
+    // 首次加载：active 无内容时直接播放，无需渐变
+    if (!isVideoPlaying(activeVideo)) {
+      _playDirectOnActive(source, onComplete);
+      return;
+    }
+
+    if (switchLocked) {
+      console.warn('视频切换进行中，忽略新请求');
+      return;
+    }
+
+    switchLocked = true;
+
+    // 重置 standby
+    resetSlotVideo(standbyVideo);
+    closePlayer(standbyPlayer);
+    standbyPlayer = null;
+
+    var ready = false;
+    var safetyTimeoutId = null;
+
+    function onReady() {
+      if (ready) return;
+      ready = true;
+      if (safetyTimeoutId) clearTimeout(safetyTimeoutId);
+      execCrossfade(onComplete);
+    }
+
+    // 监听 standby 的 'playing' 事件 — 对 WebRTC (MediaStream) 和本地文件都有效
+    standbyVideo.addEventListener('playing', function () {
+      // 延迟 150ms 确保首帧已渲染到屏幕
+      setTimeout(onReady, 150);
+    }, { once: true });
+
+    // 8 秒安全超时：standby 始终未就绪时强制渐变（避免永久卡住）
+    safetyTimeoutId = setTimeout(function () {
+      console.warn('备用视频就绪超时（8秒），强制渐变');
+      Diag.warn('video', '备用视频就绪超时', {url: source.url});
+      onReady();
+    }, 8000);
+
+    // 错误处理：standby 连接失败 → 解锁并触发故障切换
+    function onStandbyError(err) {
+      if (ready) return;
+      ready = true;
+      if (safetyTimeoutId) clearTimeout(safetyTimeoutId);
+      switchLocked = false;
+      console.error('备用流连接失败: ' + (err || 'unknown'));
+      Diag.error('video', '备用流连接失败', {url: source.url, error: String(err || '')});
+      failoverCamera();
+    }
+
+    // 在 standby 上启动播放
+    standbyVideo.loop = true;
+
+    if (source.type === 'webrtc') {
+      standbyPlayer = _createWebrtcConnection(standbyVideo, source.url, onStandbyError);
+    } else {
+      standbyVideo.src = source.url;
+      standbyVideo.onerror = function () {
+        console.error('备用本地视频加载失败: ' + source.url);
+        onStandbyError('local-load-error');
+      };
+      standbyVideo.play().catch(function (e) {
+        Diag.warn('video', 'standby play() 失败', {url: source.url, error: e ? e.message : 'unknown'});
+      });
+    }
+  }
+
+  // --- 直接在当前 active 上播放（首次加载，无渐变） ---
+  function _playDirectOnActive(source, onComplete) {
+    resetSlotVideo(activeVideo);
+    closePlayer(activePlayer);
+    activePlayer = null;
+
+    activeVideo.loop = true;
+
+    if (source.type === 'webrtc') {
+      activePlayer = _createWebrtcConnection(activeVideo, source.url);
+    } else {
+      activeVideo.src = source.url;
+      activeVideo.onerror = function () {
+        if (videoState !== 'camera') return;
+        console.error('本地视频加载失败: ' + source.url);
+        Diag.error('video', '本地视频加载失败', {url: source.url, cameraIndex: currentCameraIndex, backupIndex: currentBackupIndex});
+        failoverCamera();
+      };
+      activeVideo.play().catch(function (e) {
+        Diag.warn('video', 'active play() 失败', {url: source.url, error: e ? e.message : 'unknown'});
+      });
+    }
+
+    videoState = 'camera';
+    startCameraWatchdog();
+
+    if (typeof onComplete === 'function') onComplete();
+  }
+
+  // ====================================================================
+  //  统一播放入口（被轮播、故障切换、恢复探测、广告返回等调用）
+  // ====================================================================
+
+  function playCameraStream(source, onComplete) {
+    stopCameraWatchdog();
+    videoState = 'camera';
+    playStreamOnStandby(source, onComplete);
   }
 
   // ====================================================================
@@ -444,17 +563,19 @@
   }
 
   // ====================================================================
-  //  帧数看门狗（webrtc / local 通用）
+  //  帧数看门狗（仅监控 activeVideo）
   // ====================================================================
 
   // --- 看门狗：解码帧数停止增长时触发故障切换 ---
   // 兜底 WebRTC connectionState 仍为 'connected' 的静默冻结等场景
-  function startCameraWatchdog(video) {
+  function startCameraWatchdog() {
     stopCameraWatchdog();
-    lastFrameCount = -1;
-    stallChecks = 0;
+    var video = activeVideo;
+    var stallChecks = 0;
+    var lastFrameCount = -1;
+
     cameraWatchdogId = setInterval(function () {
-      if (videoState !== 'camera' || !video || video !== currentVideoEl || !video.isConnected) return;
+      if (videoState !== 'camera' || !video || video !== activeVideo) return;
 
       var frames;
       if (typeof video.getVideoPlaybackQuality === 'function') {
@@ -486,8 +607,6 @@
       clearInterval(cameraWatchdogId);
       cameraWatchdogId = null;
     }
-    stallChecks = 0;
-    lastFrameCount = -1;
   }
 
   // ====================================================================
@@ -510,6 +629,7 @@
       currentBackupIndex = -1;               // 新摄像头从主画面开始
       console.log('轮播切换到画面 ' + (currentCameraIndex + 1) + '/' + cameraList.length);
       Diag.info('video', '轮播切换', {toIndex: currentCameraIndex, total: cameraList.length});
+      // playCameraStream 内部使用 standby + 交叉渐变，旧画面持续显示
       playCameraStream(getCurrentSource());
     }, interval * 1000);
   }
@@ -543,16 +663,16 @@
     }
   }
 
-  // --- 切换到广告视频 ---
+  // --- 切换到广告视频（使用 standby + 交叉渐变，无黑屏） ---
   function switchToAdVideo() {
     if (adFileList.length === 0) {
       // 无广告视频 — 保持摄像头模式
       return;
     }
 
-    if (!currentVideoEl) {
-      rebuildVideoElement();
-      if (!currentVideoEl) return;
+    if (!standbyVideo || !activeVideo) {
+      initVideoElements();
+      if (!standbyVideo || !activeVideo) return;
     }
 
     // 广告期间暂停轮播与主画面恢复探测
@@ -563,29 +683,25 @@
     var folder = config.videoFolder ? config.videoFolder + '/' : '';
     var videoUrl = '/videos/' + folder + filename;
 
-    // 切换前销毁摄像头播放器
-    destroyPlayer();
+    // 使用 standby + 渐变切换到广告
+    playStreamOnStandby({ type: 'local', url: videoUrl }, function () {
+      // 渐变完成，广告视频现在是 activeVideo
+      activeVideo.loop = false;
+      activeVideo.onended = onAdVideoEnded;
+      activeVideo.onerror = onAdVideoError;
 
-    // 完全重置 video 元素
-    currentVideoEl.removeAttribute('src');
-    currentVideoEl.srcObject = null;
-    currentVideoEl.load();
+      // 确保广告视频开始播放（playStreamOnStandby 已经调了 play()，这里再确认一次）
+      activeVideo.play().catch(function (err) {
+        console.error('Ad video play() rejected:', err.message);
+        Diag.error('ad', '广告视频播放失败', {filename: filename, error: err.message});
+        currentAdIndex = (currentAdIndex + 1) % adFileList.length;
+        switchToCamera();
+      });
 
-    // 设置广告本地视频播放
-    currentVideoEl.loop = false;
-    currentVideoEl.src = videoUrl;
-    currentVideoEl.onended = onAdVideoEnded;
-    currentVideoEl.onerror = onAdVideoError;
-
-    // 显式 play() — 仅靠 autoplay 在切换 src 时可能不触发
-    currentVideoEl.play().catch(function (err) {
-      console.error('Ad video play() rejected:', err.message);
-      Diag.error('ad', '广告视频自动播放被拒', {filename: filename, error: err.message});
+      videoState = 'ad';
+      console.log('Playing ad video (' + (currentAdIndex + 1) + '/' + adFileList.length + '): ' + filename);
+      Diag.info('ad', '播放广告视频', {filename: filename, index: currentAdIndex + 1, total: adFileList.length});
     });
-
-    videoState = 'ad';
-    console.log('Playing ad video (' + (currentAdIndex + 1) + '/' + adFileList.length + '): ' + filename);
-    Diag.info('ad', '播放广告视频', {filename: filename, index: currentAdIndex + 1, total: adFileList.length});
   }
 
   function onAdVideoEnded() {
@@ -596,7 +712,7 @@
   }
 
   function onAdVideoError() {
-    var el = currentVideoEl;
+    var el = activeVideo;
     var code = el && el.error ? el.error.code : 'unknown';
     var msg = el && el.error ? el.error.message : 'unknown';
     console.error('Ad video error (code=' + code + '): ' + msg + ' — src=' + (el ? el.src : ''));
@@ -607,60 +723,98 @@
 
   // --- 广告结束切回摄像头（保持故障切换后的主备状态，不重置索引） ---
   function switchToCamera() {
-    if (!currentVideoEl) {
-      rebuildVideoElement();
-      if (!currentVideoEl) return;
-    }
-
-    // 清理广告播放状态
-    currentVideoEl.onended = null;
-    currentVideoEl.onerror = null;
-    currentVideoEl.loop = true;
-    currentVideoEl.src = '';
-
     videoState = 'camera';
 
     var source = getCurrentSource();
     if (source) {
-      playCameraStream(source);
+      playCameraStream(source, function () {
+        // 渐变完成，恢复摄像头相关定时器
+        startCameraTimer();
+        startCameraRotateTimer();
+        if (currentBackupIndex >= 0) startRecoveryCheck();  // 仍在备用流上则继续探测主画面
+      });
+    }
+  }
+
+  // ====================================================================
+  //  视频系统初始化 + 生命周期
+  // ====================================================================
+
+  function setupVideoSystem(cfg) {
+    var area = els.videoArea;
+    var placeholder = els.placeholder;
+    if (!area) return;
+
+    var newList = buildCameraList(cfg.videoStreams);
+
+    if (newList.length === 0) {
+      // 无有效摄像头 — 完全清理
+      cleanupVideoSystem();
+      if (videoPanel) { videoPanel.remove(); videoPanel = null; activeVideo = null; standbyVideo = null; }
+      cameraList = [];
+      currentCameraIndex = 0;
+      currentBackupIndex = -1;
+      if (placeholder) placeholder.style.display = 'flex';
+      return;
     }
 
-    startCameraTimer();
+    if (placeholder) placeholder.style.display = 'none';
+
+    var listChanged = !listsEqual(cameraList, newList);
+
+    // 软清理：停所有定时器、重置广告状态（列表未变时保留播放器与 DOM）
+    cleanupVideoSystem(!listChanged);
+
+    cameraList = newList;
+
+    // 创建双 video 元素（若不存在）
+    if (!activeVideo || !standbyVideo || !videoPanel || !videoPanel.parentNode) {
+      initVideoElements();
+      listChanged = true; // 新建元素，必须重建播放器
+    }
+
+    if (listChanged) {
+      // 列表有变化：从第一个摄像头的主画面开始播放
+      currentCameraIndex = 0;
+      currentBackupIndex = -1;
+      playCameraStream(getCurrentSource());
+    } else if (currentBackupIndex >= 0) {
+      // 列表未变且正在使用备用流：恢复探测被软清理停掉了，重新启动
+      startRecoveryCheck();
+    }
+
+    // 多画面轮播
     startCameraRotateTimer();
-    if (currentBackupIndex >= 0) startRecoveryCheck();  // 仍在备用流上则继续探测主画面
-  }
 
-  // --- 重建 <video> 元素（防御性保留） ---
-  function rebuildVideoElement() {
-    if (!videoPanel) return;
-    videoPanel.innerHTML = '';
-    currentVideoEl = document.createElement('video');
-    currentVideoEl.autoplay = true;
-    currentVideoEl.muted = true;
-    currentVideoEl.playsInline = true;
-    currentVideoEl.loop = true;
-    videoPanel.appendChild(currentVideoEl);
-  }
-
-  // --- 销毁当前播放器（WebRTC 连接）及关联定时器 ---
-  function destroyPlayer() {
-    // 停止看门狗、取消待执行的原地重建
-    stopCameraWatchdog();
-    if (rebuildTimerId !== null) {
-      clearTimeout(rebuildTimerId);
-      rebuildTimerId = null;
+    // 广告目录（留空 = 禁用广告轮播，仅摄像头）
+    var folder = cfg.videoFolder || '';
+    if (folder) {
+      fetchAdFileList(folder);
+    } else {
+      adFileList = [];
+      console.log('Video folder not configured, camera-only mode');
     }
-    if (currentPlayer) {
-      // RTCPeerConnection
-      if (currentPlayer.close) {
-        try { currentPlayer.close(); } catch (e) { /* 忽略 */ }
+  }
+
+  // --- 从服务端获取广告视频文件列表 ---
+  function fetchAdFileList(folder) {
+    var url = '/api/video-list?folder=' + encodeURIComponent(folder);
+    fetch(url).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    }).then(function (files) {
+      adFileList = files || [];
+      if (adFileList.length > 0) {
+        console.log('Ad videos found: ' + adFileList.length + ' files');
+        startCameraTimer();
+      } else {
+        console.log('No ad videos in folder, showing camera only');
       }
-      currentPlayer = null;
-    }
-    if (currentVideoEl) {
-      currentVideoEl.src = '';
-      currentVideoEl.srcObject = null;
-    }
+    }).catch(function (err) {
+      console.error('Failed to fetch ad video list:', err);
+      Diag.error('ad', '广告视频列表获取失败', {error: err.message, folder: folder});
+      adFileList = [];
+    });
   }
 
   // --- 软清理：停所有定时器，按需保留播放器，保留 DOM ---
@@ -669,12 +823,22 @@
     stopCameraRotateTimer();
     stopRecoveryCheck();
     if (!keepPlayer) {
-      destroyPlayer();
+      // 硬清理：销毁所有播放器和交叉渐变定时器
+      stopCameraWatchdog();
+      if (crossfadeTimerId) { clearTimeout(crossfadeTimerId); crossfadeTimerId = null; }
+      if (rebuildTimerId) { clearTimeout(rebuildTimerId); rebuildTimerId = null; }
+      closePlayer(activePlayer);
+      activePlayer = null;
+      closePlayer(standbyPlayer);
+      standbyPlayer = null;
+      if (activeVideo) resetSlotVideo(activeVideo);
+      if (standbyVideo) resetSlotVideo(standbyVideo);
+      switchLocked = false;
     }
     adFileList = [];
     currentAdIndex = 0;
     videoState = 'camera';
-    // 注意：不移除 videoPanel / currentVideoEl —— setupVideoSystem 会复用，避免黑闪
+    // 注意：不移除 videoPanel / video 元素 —— setupVideoSystem 会复用，避免黑闪
   }
 
   // ====================================================================

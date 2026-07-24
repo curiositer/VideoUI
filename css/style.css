@@ -205,6 +205,18 @@ html, body {
   height: 100%;
   border: none;
   object-fit: fill;
+  transition: opacity 0.5s ease;
+}
+
+/* 双 video 元素渐变切换 */
+.video-panel video.video-active {
+  opacity: 1;
+  z-index: 2;
+}
+
+.video-panel video.video-standby {
+  opacity: 0;
+  z-index: 1;
 }
 
 /* --- No-signal placeholder --- */
