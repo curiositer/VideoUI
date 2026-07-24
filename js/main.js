@@ -41,6 +41,7 @@
   var standbyPlayer = null;        // standbyVideo 的 RTCPeerConnection
   var switchLocked = false;        // 防止并发切换
   var crossfadeTimerId = null;     // CSS 渐变完成定时器（用于取消冲突）
+  var activeSourceUrl = null;      // 当前 activeVideo 正在播放的源 URL（用于跳过同源重连）
 
   // 摄像头列表 / 轮播 / 主备切换状态
   var cameraList = [];             // buildCameraList 产物 [{url, type, label, backups:[...]}]
@@ -225,7 +226,12 @@
         console.error('WebRTC 连接失败: ' + url);
         Diag.error('video', 'WebRTC连接失败', {url: url, connectionState: pc.connectionState});
         if (pc === activePlayer) {
-          failoverCamera();
+          if (typeof onError === 'function') {
+            onError('connection-failed');      // 走回调：解锁 + skipCooldown
+          } else {
+            switchLocked = false;
+            failoverCamera();
+          }
         } else if (typeof onError === 'function') {
           onError('connection-failed');
         }
@@ -252,7 +258,12 @@
       console.error('WebRTC/WHEP 握手失败:', err);
       Diag.error('video', 'WHEP握手失败', {url: url, error: err.message});
       if (pc === activePlayer) {
-        failoverCamera();
+        if (typeof onError === 'function') {
+          onError(err);                        // 走回调：解锁 + skipCooldown
+        } else {
+          switchLocked = false;
+          failoverCamera();
+        }
       } else if (typeof onError === 'function') {
         onError(err);
       }
@@ -314,14 +325,23 @@
       initVideoElements();
     }
 
-    // 首次加载：active 无内容时直接播放，无需渐变
-    if (!isVideoPlaying(activeVideo)) {
-      _playDirectOnActive(source, onComplete);
+    if (switchLocked) {
+      console.warn('视频切换进行中，忽略新请求');
       return;
     }
 
-    if (switchLocked) {
-      console.warn('视频切换进行中，忽略新请求');
+    // 如果当前正在播放的就是同一个 URL，无需重连（避免交叉渐变闪烁）
+    if (activeSourceUrl && source.url === activeSourceUrl && isVideoPlaying(activeVideo)) {
+      console.log('源 ' + source.url + ' 已在播放，跳过切换');
+      if (typeof onComplete === 'function') onComplete();
+      return;
+    }
+
+    // 首次加载：active 无内容时直接播放，无需渐变
+    // switchLocked 由 _playDirectOnActive 内部的 playing/error 回调负责解锁
+    if (!isVideoPlaying(activeVideo)) {
+      switchLocked = true;
+      _playDirectOnActive(source, onComplete);
       return;
     }
 
@@ -339,6 +359,7 @@
       if (ready) return;
       ready = true;
       if (safetyTimeoutId) clearTimeout(safetyTimeoutId);
+      activeSourceUrl = source.url;  // 记录新源 URL，用于后续同源跳过判断
       execCrossfade(onComplete);
     }
 
@@ -355,7 +376,7 @@
       onReady();
     }, 8000);
 
-    // 错误处理：standby 连接失败 → 解锁并触发故障切换
+    // 错误处理：standby 连接失败 → 解锁并触发故障切换（跳过冷却，这是合法顺序切换）
     function onStandbyError(err) {
       if (ready) return;
       ready = true;
@@ -363,7 +384,7 @@
       switchLocked = false;
       console.error('备用流连接失败: ' + (err || 'unknown'));
       Diag.error('video', '备用流连接失败', {url: source.url, error: String(err || '')});
-      failoverCamera();
+      failoverCamera(true);  // skipCooldown: 这是顺序切换不是重复触发
     }
 
     // 在 standby 上启动播放
@@ -383,7 +404,7 @@
     }
   }
 
-  // --- 直接在当前 active 上播放（首次加载，无渐变） ---
+  // --- 直接在当前 active 上播放（首次加载或无画面时的故障切换） ---
   function _playDirectOnActive(source, onComplete) {
     resetSlotVideo(activeVideo);
     closePlayer(activePlayer);
@@ -391,15 +412,38 @@
 
     activeVideo.loop = true;
 
+    // 安全解锁定时器：如果 playing 事件 15 秒内未触发，强制解锁
+    var directUnlockTimer = setTimeout(function () {
+      if (switchLocked) {
+        console.warn('直接连接 playing 事件超时（15秒），强制解锁');
+        switchLocked = false;
+      }
+    }, 15000);
+
+    function onActiveError(err) {
+      // 直接连接失败 → 解锁并触发顺序故障切换（跳过冷却）
+      clearTimeout(directUnlockTimer);
+      if (switchLocked) switchLocked = false;
+      console.error('直接连接失败: ' + (err || 'unknown'));
+      Diag.error('video', '直接连接失败', {url: source.url, error: String(err || '')});
+      failoverCamera(true);
+    }
+
+    // 连接成功时通过 'playing' 事件解锁
+    activeVideo.addEventListener('playing', function () {
+      clearTimeout(directUnlockTimer);
+      if (switchLocked) switchLocked = false;
+    }, { once: true });
+
     if (source.type === 'webrtc') {
-      activePlayer = _createWebrtcConnection(activeVideo, source.url);
+      activePlayer = _createWebrtcConnection(activeVideo, source.url, onActiveError);
     } else {
       activeVideo.src = source.url;
       activeVideo.onerror = function () {
         if (videoState !== 'camera') return;
         console.error('本地视频加载失败: ' + source.url);
         Diag.error('video', '本地视频加载失败', {url: source.url, cameraIndex: currentCameraIndex, backupIndex: currentBackupIndex});
-        failoverCamera();
+        onActiveError('local-load-error');
       };
       activeVideo.play().catch(function (e) {
         Diag.warn('video', 'active play() 失败', {url: source.url, error: e ? e.message : 'unknown'});
@@ -407,6 +451,7 @@
     }
 
     videoState = 'camera';
+    activeSourceUrl = source.url;  // 记录当前播放源，用于后续同源跳过判断
     startCameraWatchdog();
 
     if (typeof onComplete === 'function') onComplete();
@@ -429,14 +474,21 @@
   // --- 统一故障切换入口 ---
   // 切换链：主画面 → 备1 → 备2 → … → 下一个摄像头的主画面
   // 只有一个摄像头且无备用时原地重建（保留自愈能力）
-  function failoverCamera() {
+  // skipCooldown: true 时跳过冷却检查，用于连接失败后的顺序切换
+  function failoverCamera(skipCooldown) {
     if (videoState !== 'camera') return;
     if (cameraList.length === 0) return;
 
+    // 如果正在连接中（switchLocked），说明已有连接尝试在进行。
+    // 此时只有该连接的错误回调（已解锁 switchLocked）才能推进故障切换。
+    // 其他来源（看门狗、onconnectionstatechange）的并发调用会被阻挡，避免索引被错误修改。
+    if (switchLocked) return;
+
     // 冷却保护：多个错误源（看门狗/连接事件/onerror）同时触发时避免切换风暴。
     // 冷却期内的触发被忽略，由持续运行的看门狗在下一轮兜底重试
+    // skipCooldown 用于连接建立失败后的顺序切换——这是合法的下一步，不应被阻挡
     var now = Date.now();
-    if (now < failoverCooldownUntil) return;
+    if (!skipCooldown && now < failoverCooldownUntil) return;
     failoverCooldownUntil = now + FAILOVER_COOLDOWN_MS;
 
     if (currentCameraIndex >= cameraList.length) currentCameraIndex = 0;
@@ -834,6 +886,7 @@
       if (activeVideo) resetSlotVideo(activeVideo);
       if (standbyVideo) resetSlotVideo(standbyVideo);
       switchLocked = false;
+      activeSourceUrl = null;
     }
     adFileList = [];
     currentAdIndex = 0;
