@@ -34,3 +34,6 @@ Desktop.ini
 # ===== Project Specific =====
 # Server runtime output
 server.log
+
+# Diagnostic logs
+logs/

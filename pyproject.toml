@@ -1,7 +1,7 @@
 [project]
 name = "videoui"
 version = "0.1.0"
-description = "Add your description here"
+description = "停车场大屏实时监控系统 — 服务端 + 前端展示"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []

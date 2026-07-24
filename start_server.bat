@@ -10,7 +10,7 @@ if exist ".venv\Scripts\activate.bat" (
 )
 
 echo [%date% %time%] Starting Parking Display Server...
-python server.py --port 8080 --parkid-a 20210001 --parkid-b 20210002
+python server.py --port 3000 --parkid-a 20210001 --parkid-b 20210002 --video-dir D:\videos
 
 :: If server exits, log and pause (keep window open for debugging)
 echo [%date% %time%] Server stopped unexpectedly.

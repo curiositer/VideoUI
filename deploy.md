@@ -3,14 +3,13 @@
 ## 1. 系统拓扑
 
 ```
-海康摄像头 ──RTSP──→ MediaMTX ──HLS──→ Nginx :80 ──→ Chrome 全屏
-  rtsp://ip:port        :8888         统一入口         kiosk 模式
-  /Streaming/           :8887
+海康摄像头 ──RTSP──→ MediaMTX ─WebRTC─→ Nginx :80 ──→ Chrome 全屏
+  rtsp://ip:port        :8889 (WHEP)   统一入口         kiosk 模式
+  /Streaming/           :8888 (HLS备用)
   Channels/101
-                                         ├─ /       → Python :3000 (页面+API)
-                                         ├─ /hls/   → HLS 视频流
-                                         ├─ /flv/   → FLV 视频流
-                                         └─ /videos/→ 本地 MP4 文件
+                                           ├─ /        → Python :3000 (页面+API)
+                                           ├─ /webrtc/ → WebRTC (WHEP) 信令
+                                           └─ /videos/ → 本地 MP4 文件
 ```
 
 所有请求统一到 `http://localhost:80`，从根源消除跨域。
@@ -48,13 +47,11 @@ mkdir D:\videos
 
 ## 3. 配置 MediaMTX
 
-编辑 `D:\mediamtx\mediamtx.yml`，配置海康摄像头 RTSP 源：
+将项目中的 `mediamtx.yml.example` 复制为 `mediamtx.yml`，编辑海康摄像头 RTSP 源：
 
 ```yaml
 # ====== 必改项 ======
-# 修改默认管理员密码
 api: yes
-webRtcAdditionalHosts: []
 
 # ====== 摄像头路径 ======
 paths:
@@ -63,15 +60,13 @@ paths:
   parking_a:
     source: rtsp://admin:password@192.168.1.101:554/Streaming/Channels/101
   # 更多摄像头按同样格式添加
-  # cam_exit:
-  #   source: rtsp://admin:password@192.168.1.102:554/Streaming/Channels/101
 ```
 
 > **海康摄像头说明**：所有海康摄像头 RTSP 路径统一为 `/Streaming/Channels/101`（主码流），仅 IP 和端口不同。如需子码流，路径改为 `/Streaming/Channels/102`。
 
-**HLS 访问地址**（MediaMTX 启动后）：
-- 入口摄像头：`http://localhost:8888/entrance/index.m3u8`
-- 停车场A：`http://localhost:8888/parking_a/index.m3u8`
+**WebRTC 访问地址**（MediaMTX 启动后）：
+- 入口摄像头 WHEP：`http://localhost:8889/entrance/whep`
+- 停车场 A WHEP：`http://localhost:8889/parking_a/whep`
 
 ---
 
@@ -95,7 +90,7 @@ nginx -t
 
 确保停车场客户端向以下地址 POST 数据：
 ```
-POST http://localhost:3000/api/parkingspace
+POST http://localhost:3000/parking
 Content-Type: application/json
 
 {
@@ -119,10 +114,8 @@ parkid `20210001` 对应停车场，`20210002` 对应停车楼（可通过 serve
 
 | 视频类型 | 地址格式 | 示例 |
 |---------|---------|------|
-| HLS 视频流 | `/hls/<path>/index.m3u8` | `/hls/entrance/index.m3u8` |
-| HTTP-FLV 视频流 | `/flv/<path>` | `/flv/entrance` |
+| WebRTC 视频流 | `/webrtc/<path>` | `/webrtc/entrance` |
 | 本地视频文件 | `/videos/<filename>` | `/videos/promo.mp4` |
-| IFrame（IP 摄像头网页）| 完整 HTTP URL | `http://192.168.1.200:8080` |
 
 > **关键**：配置完后通过 `http://localhost`（端口 80）访问大屏，不要直接访问 3000 端口，否则跨域问题仍然存在。
 
@@ -136,18 +129,13 @@ parkid `20210001` 对应停车场，`20210002` 对应停车楼（可通过 serve
 
 ```bash
 # --- MediaMTX ---
-nssm install MediaMTX
-# 弹出窗口，按以下填入：
-#   Application Path:  D:\mediamtx\mediamtx.exe
-#   Startup Directory: D:\mediamtx
-# 或者命令行：
 nssm install MediaMTX D:\mediamtx\mediamtx.exe
 nssm set MediaMTX AppDirectory D:\mediamtx
 nssm set MediaMTX AppExit Default Restart
 nssm set MediaMTX Start SERVICE_AUTO_START
 
 # --- Python Parking Server ---
-nssm install ParkingServer python "D:\AI\VideoUI\server.py --port 3000 --parkid-a 20210001 --parkid-b 20210002"
+nssm install ParkingServer python "D:\AI\VideoUI\server.py --port 3000 --parkid-a 20210001 --parkid-b 20210002 --video-dir D:\videos"
 nssm set ParkingServer AppDirectory D:\AI\VideoUI
 nssm set ParkingServer AppExit Default Restart
 nssm set ParkingServer Start SERVICE_AUTO_START
@@ -242,12 +230,15 @@ type D:\nginx\logs\access.log
 # Python 服务
 curl http://localhost:3000/api/parking/status
 
-# MediaMTX HLS
-curl http://localhost:8888/entrance/index.m3u8
+# 健康检查
+curl http://localhost:3000/api/health
+
+# MediaMTX WebRTC（WHEP 信令地址应可达）
+curl -I http://localhost:8889/entrance
 
 # Nginx 代理（最终入口）
 curl http://localhost/api/parking/status
-curl http://localhost/hls/entrance/index.m3u8
+curl http://localhost/webrtc/entrance
 ```
 
 ### 停止所有服务
@@ -264,7 +255,16 @@ nssm stop MediaMTX
 | 故障现象 | 排查步骤 |
 |---------|---------|
 | Chrome 显示白屏 | 1. 检查 Nginx 是否运行 `nssm status ParkingNginx` 2. 检查 Python 服务 `curl localhost:3000` |
-| 视频黑屏/加载中 | 1. 检查 MediaMTX `nssm status MediaMTX` 2. 检查摄像头 RTSP 是否能通 `ffplay rtsp://...` 3. 查看 MediaMTX 控制台输出 |
+| 视频黑屏/加载中 | 1. 检查 MediaMTX `nssm status MediaMTX` 2. 检查摄像头 RTSP 是否能通 3. 查看 status.html 诊断仪表盘 |
 | 车位数据不更新 | 1. 检查 ParkingServer 状态 2. 确认停车场客户端 POST 是否正常 |
-| 某进程反复崩溃 | nssm 会自动重启，检查对应日志文件排查根因 |
+| 某进程反复崩溃 | nssm 会自动重启，检查 status.html 诊断日志排查根因 |
 | 停电后恢复 | 所有服务已注册为 `SERVICE_AUTO_START`，开机自动启动，无需人工干预 |
+
+### 诊断工具
+
+打开 `http://localhost:3000/status.html` 可查看：
+- 系统健康状态（正常/部分异常/严重异常）
+- 今日错误/警告/信息事件统计
+- 事件时间线（可按级别筛选）
+- 摄像头故障切换详情
+- 服务运行时长

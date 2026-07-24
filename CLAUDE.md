@@ -50,15 +50,17 @@ curl -X POST http://localhost:3000/parking \
 
 ```
 server.py               → HTTP 服务端：接收 POST、提供 GET、托管静态文件（默认端口 3000）
-index.html              → 主展示页：左 3/4 视频 + 右 1/4 车位卡片（三行信息）
+index.html              → 主展示页：左 3/4 视频 + 右 1/4 车位卡片
 admin.html              → 配置管理页：所有设置写入 localStorage
+status.html             → 运行诊断仪表盘：健康状态、事件时间线、摄像头切换统计
 nginx.conf              → Nginx 反向代理配置：统一入口 :80，消除跨域
 deploy.md               → 部署运维手册：服务注册、开机自启、故障恢复
-css/style.css           → 全局样式：9:4 自适应容器、卡片、视频面板、管理页表单
+css/style.css           → 全局样式：9:4 自适应容器、卡片、视频面板、管理页表单、诊断页样式
 js/config.js            → 配置读写模块：getConfig() / saveConfig() / resetConfig()
 js/main.js              → 主屏逻辑：轮询数据、多摄像头轮播、主备故障切换、帧数看门狗、摄像头+广告交替播放
 js/admin.js             → 管理页表单：加载当前配置、保存、重置、备用流子列表编辑
-mediamtx.yml.example    → MediaMTX 配置模板，供用户参考
+js/diagnostics.js       → 诊断日志模块：静默收集 console 错误/警告、全局异常、定时上报到服务端
+mediamtx.yml.example    → MediaMTX 配置模板（WebRTC/WHEP），供用户参考
 ```
 
 ### 卡片展示内容（右侧 1/4）
@@ -69,13 +71,15 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 总空闲车位：1098 个       ← A+B 空闲合计 (绿色)
 ```
 
+> 共 3 行信息：景区名称 + 总停车位（红）+ 总空闲车位（绿）。停车场 A 和停车楼 B 的数据在后端合并计算。
+
 ### 数据流
 
 1. 停车场客户端在车位变动时 POST 到 `/parking`，server.py 按 parkid 存入内存
 2. 前端 `main.js` 按 `pollInterval` 秒轮询 `GET /api/parking/status`，获取 A/B 两个车场最新数据
 3. 总停车位 = a.total + b.total（两个车场总车位之和，红色显示）
 4. 总空闲车位 = a.available + b.available（两个车场空闲车位之和，绿色显示）
-6. 配置在另一标签页修改时，`main.js` 通过 `storage` 事件自动热重载
+5. 配置在另一标签页修改时，`main.js` 通过 `storage` 事件自动热重载
 
 ### ParkID 映射
 
