@@ -727,7 +727,14 @@
       if (!standbyVideo || !activeVideo) return;
     }
 
-    // 广告期间暂停轮播与主画面恢复探测
+    // 如果正在切换中（轮播/故障切换），延迟重试，避免与 switchLocked 冲突
+    if (switchLocked) {
+      console.log('广告切换被系统占用，1秒后重试');
+      cameraTimerId = setTimeout(switchToAdVideo, 1000);
+      return;
+    }
+
+    // 确认可以切换后才停止摄像头相关定时器
     stopCameraRotateTimer();
     stopRecoveryCheck();
 
