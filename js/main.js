@@ -799,7 +799,42 @@
   //  视频系统初始化 + 生命周期
   // ====================================================================
 
+  var _cameraDefaultsLoading = false;  // 防止并发加载 cameras.json
+
   function setupVideoSystem(cfg) {
+    // ── 首次启动：从预生成的 cameras.json 加载摄像头列表 ──
+    if (cfg._needsCameraDefaults && cfg.videoStreams.length === 0 && !_cameraDefaultsLoading) {
+      _cameraDefaultsLoading = true;
+      console.log('首次启动，尝试从 cameras.json 加载摄像头配置...');
+      fetch('/cameras.json')
+        .then(function (resp) {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.json();
+        })
+        .then(function (streams) {
+          if (streams && streams.length > 0) {
+            console.log('从 cameras.json 加载了 ' + streams.length + ' 个摄像头');
+            cfg.videoStreams = streams;
+            delete cfg._needsCameraDefaults;
+            saveConfig(cfg);               // 持久化到 localStorage
+            setupVideoSystem(cfg);          // 重新初始化
+          }
+        })
+        .catch(function (err) {
+          console.warn('cameras.json 加载失败（文件不存在或格式错误）:', err.message);
+          Diag.warn('system', 'cameras.json加载失败', {error: err.message});
+          delete cfg._needsCameraDefaults;
+          // 显示占位图
+          var ph = els.placeholder;
+          if (ph) ph.style.display = 'flex';
+        })
+        .finally(function () {
+          _cameraDefaultsLoading = false;
+        });
+      return;  // 等 fetch 完成后递归调用
+    }
+    // ──────────────────────────────────────────────────────────
+
     var area = els.videoArea;
     var placeholder = els.placeholder;
     if (!area) return;

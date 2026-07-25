@@ -16,7 +16,65 @@
 
 ---
 
-## 2. 环境准备
+## 2. 快速启动（推荐 ★）
+
+日常使用只需两步，无需技术背景。
+
+### 2.1 编辑配置文件
+
+用记事本打开项目根目录的 **`config.json`**，修改摄像头 RTSP 地址：
+
+```json
+{
+  "parkid_a": "cbssstcc",
+  "parkid_b": "cbsjqtcl",
+  "cameras": [
+    { "name": "入口", "rtsp": "rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101" },
+    { "name": "停车场A", "rtsp": "rtsp://admin:password@192.168.1.101:554/Streaming/Channels/101" }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `parkid_a` | 停车场（地面）ParkID，需与停车场上报系统一致 |
+| `parkid_b` | 停车楼 ParkID |
+| `cameras[].name` | 摄像头名称，如"入口""停车场A"，会显示在大屏上 |
+| `cameras[].rtsp` | 海康摄像头 RTSP 地址，替换 IP、账号、密码 |
+| `video_dir` | 本地视频存放目录，默认 `D:/videos` |
+| `server_port` | 服务端口号，一般不需要改 |
+
+> **RTSP 地址格式参考**：海康威视主码流 `rtsp://用户名:密码@摄像头IP:554/Streaming/Channels/101`
+
+### 2.2 启动和停止
+
+| 操作 | 方法 |
+|------|------|
+| **启动系统** | 双击 `启动.bat` → 等待 5 秒 → 浏览器自动打开大屏 |
+| **停止系统** | 双击 `停止.bat` → 关闭所有服务 |
+
+`启动.bat` 自动完成以下工作（用户无需关心）：
+1. 根据 `config.json` 自动生成 MediaMTX 配置（`D:\mediamtx\mediamtx.yml`）
+2. 自动生成前端摄像头列表（`cameras.json`）
+3. 启动 MediaMTX（RTSP → WebRTC 桥接）
+4. 启动 Nginx（反向代理，统一 :80 入口）
+5. 启动 Python 服务端（页面 + 停车数据 API）
+6. 打开浏览器访问 `http://localhost`
+
+> **提示**：关闭三个服务窗口不会停止系统 — 服务在后台运行。需要停止时请双击 `停止.bat`。
+
+### 2.3 修改摄像头
+
+摄像头信息变更时：
+1. 双击 `停止.bat` 停止系统
+2. 编辑 `config.json` 中的 `cameras` 数组
+3. 双击 `启动.bat` 重新启动
+
+如需更多配置（轮播间隔、广告视频、备用流等），打开浏览器访问 `http://localhost:3000/admin.html` 进行设置，保存后刷新大屏页面即可生效。
+
+---
+
+## 3. 环境准备（仅首次部署时需要）
 
 ### 2.1 安装 Python 3
 
@@ -45,7 +103,9 @@ mkdir D:\videos
 
 ---
 
-## 3. 配置 MediaMTX
+## 4. 配置 MediaMTX（高级用法 — 启动.bat 已自动处理，日常不需要手动操作）
+
+> 以下为手动配置流程。日常使用请直接用「启动.bat」，它会根据 config.json 自动生成 mediamtx.yml。
 
 将项目中的 `mediamtx.yml.example` 复制为 `mediamtx.yml`，编辑海康摄像头 RTSP 源：
 
@@ -70,7 +130,7 @@ paths:
 
 ---
 
-## 4. 配置 Nginx
+## 5. 配置 Nginx（高级用法 — 首次部署时配置一次即可）
 
 将项目中的 `nginx.conf` 复制到 `D:\nginx\conf\nginx.conf`（覆盖默认配置）：
 
@@ -86,7 +146,7 @@ nginx -t
 
 ---
 
-## 5. 配置数据上报
+## 6. 配置数据上报
 
 确保停车场客户端向以下地址 POST 数据：
 ```
@@ -108,7 +168,7 @@ parkid `20210001` 对应停车场，`20210002` 对应停车楼（可通过 serve
 
 ---
 
-## 6. 视频地址配置
+## 7. 视频地址配置
 
 浏览器打开 `http://localhost:3000/admin.html`，添加监控画面时填写以下格式：
 
@@ -121,7 +181,7 @@ parkid `20210001` 对应停车场，`20210002` 对应停车楼（可通过 serve
 
 ---
 
-## 7. 注册 Windows 服务（开机自启 + 崩溃重启）
+## 8. 注册 Windows 服务（开机自启 + 崩溃重启）
 
 ### 7.1 通过 nssm 注册 3 个服务
 
@@ -168,7 +228,7 @@ nssm set ParkingNginx DependOnService MediaMTX ParkingServer
 
 ---
 
-## 8. Chrome 大屏自动展示
+## 9. Chrome 大屏自动展示
 
 ### 8.1 创建快捷方式
 
@@ -203,7 +263,7 @@ start "" "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk --disab
 
 ---
 
-## 9. 日常运维
+## 10. 日常运维
 
 ### 查看服务状态
 ```bash
@@ -250,7 +310,7 @@ nssm stop MediaMTX
 
 ---
 
-## 10. 故障恢复流程
+## 11. 故障恢复流程
 
 | 故障现象 | 排查步骤 |
 |---------|---------|

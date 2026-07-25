@@ -60,13 +60,20 @@ function getConfig() {
         delete stored.videoType;
       }
 
-      return { ...DEFAULT_CONFIG, ...stored };
+      var merged = { ...DEFAULT_CONFIG, ...stored };
+      // 首次使用（从未在 admin 页面保存过），标记需从 cameras.json 加载
+      if (merged.videoStreams.length === 0) {
+        merged._needsCameraDefaults = true;
+      }
+      return merged;
     }
   } catch (e) {
     console.warn('Failed to read config from localStorage, using defaults.', e);
     if (typeof Diag !== 'undefined') Diag.warn('system', '配置读取失败', {error: e.message});
   }
-  return { ...DEFAULT_CONFIG };
+  var defaults = { ...DEFAULT_CONFIG };
+  defaults._needsCameraDefaults = true;
+  return defaults;
 }
 
 /**

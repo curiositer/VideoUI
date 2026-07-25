@@ -1,0 +1,26 @@
+{
+  "_说明": "========== 停车场大屏配置文件 ========== 用记事本打开，修改下方内容后保存，然后双击「启动.bat」即可。",
+  "_字段说明": {
+    "server_port": "服务端口号，一般不需要改",
+    "parkid_a": "停车场（地面）ParkID，需与停车场上报系统一致",
+    "parkid_b": "停车楼 ParkID，需与停车楼上报系统一致",
+    "video_dir": "本地视频文件存放目录",
+    "mediamtx_path": "MediaMTX 安装路径（mediamtx.exe 所在位置）",
+    "nginx_path": "Nginx 安装路径（nginx.exe 所在位置）",
+    "cameras": "摄像头列表：每行一个摄像头，填「name」和「rtsp」地址即可"
+  },
+
+  "server_port": 3000,
+  "parkid_a": "cbssstcc",
+  "parkid_b": "cbsjqtcl",
+  "video_dir": "D:/videos",
+  "mediamtx_path": "D:/mediamtx/mediamtx.exe",
+  "nginx_path": "D:/nginx/nginx.exe",
+
+  "cameras": [
+    {
+      "name": "入口",
+      "rtsp": "rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101"
+    }
+  ]
+}
