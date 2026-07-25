@@ -107,9 +107,29 @@ def main():
     print("等待服务就绪（5 秒）...")
     time.sleep(5)
 
-    # ── 打开浏览器 ──
-    print("打开浏览器...")
-    subprocess.run(["cmd", "/c", "start", "http://localhost"], shell=True)
+    # ── 打开 Chrome 浏览器（全屏 Kiosk 模式）──
+    print("打开 Chrome 浏览器...")
+    chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+    ]
+    chrome_exe = None
+    for p in chrome_paths:
+        if os.path.isfile(p):
+            chrome_exe = p
+            break
+
+    if chrome_exe:
+        subprocess.Popen(
+            [chrome_exe, "--kiosk", "--disable-restore-session-state",
+             "--disable-session-crashed-bubble", "--disable-features=TranslateUI",
+             "http://localhost"],
+            close_fds=True,
+        )
+    else:
+        print("  [警告] 找不到 Chrome，使用默认浏览器打开")
+        subprocess.run(["cmd", "/c", "start", "http://localhost"], shell=True)
 
     print()
     print("=" * 60)
