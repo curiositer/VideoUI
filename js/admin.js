@@ -25,19 +25,71 @@
   var toast = document.getElementById('toast');
   var streamListEl = document.getElementById('video-streams-list');
   var btnAddStream = document.getElementById('btn-add-stream');
+  var btnImportCameras = document.getElementById('btn-import-cameras');
 
   // 正在编辑的监控画面列表
   var editingStreams = [];
 
-  // --- 初始化：把当前配置填入表单 ---
-  function init() {
-    var config = getConfig();
-    populateForm(config);
-    renderStreamList(config.videoStreams || []);
+  // 防止并发加载 cameras.json
+  var _cameraDefaultsLoading = false;
+  var _eventsBound = false;
 
+  // --- 初始化：绑定事件 + 加载配置到表单 ---
+  function init() {
+    bindEvents();
+    var config = getConfig();
+    loadConfigIntoForm(config);
+  }
+
+  // 绑定保存/重置/添加按钮事件（只执行一次）
+  function bindEvents() {
+    if (_eventsBound) return;
+    _eventsBound = true;
     document.getElementById('btn-save').addEventListener('click', onSave);
     document.getElementById('btn-reset').addEventListener('click', onReset);
     btnAddStream.addEventListener('click', onAddStream);
+    if (btnImportCameras) {
+      btnImportCameras.addEventListener('click', onImportCameras);
+    }
+  }
+
+  // 加载配置到表单（如果首次使用则先从 cameras.json 加载摄像头列表）
+  function loadConfigIntoForm(config) {
+    if (config._needsCameraDefaults && config.videoStreams.length === 0 && !_cameraDefaultsLoading) {
+      _cameraDefaultsLoading = true;
+      console.log('首次启动，尝试从 cameras.json 加载摄像头配置...');
+      fetch('/cameras.json')
+        .then(function (resp) {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.json();
+        })
+        .then(function (streams) {
+          if (streams && streams.length > 0) {
+            console.log('从 cameras.json 加载了 ' + streams.length + ' 个摄像头（含备用流）');
+            config.videoStreams = streams;
+            delete config._needsCameraDefaults;
+            saveConfig(config);               // 持久化到 localStorage
+            populateForm(config);
+            renderStreamList(config.videoStreams || []);
+          } else {
+            populateForm(config);
+            renderStreamList(config.videoStreams || []);
+          }
+        })
+        .catch(function (err) {
+          console.warn('cameras.json 加载失败（文件不存在或格式错误）:', err.message);
+          delete config._needsCameraDefaults;
+          populateForm(config);
+          renderStreamList(config.videoStreams || []);
+        })
+        .finally(function () {
+          _cameraDefaultsLoading = false;
+        });
+      return;  // 等 fetch 完成后填充表单
+    }
+
+    populateForm(config);
+    renderStreamList(config.videoStreams || []);
   }
 
   function populateForm(config) {
@@ -316,9 +368,21 @@
     if (!confirm('确定要恢复默认配置吗？当前设置（包括监控画面列表）将被清除。')) return;
     resetConfig();
     var defaults = getConfig();
-    populateForm(defaults);
-    renderStreamList(defaults.videoStreams || []);
+    // 通过 loadConfigIntoForm 加载，首次使用会自动从 cameras.json 导入摄像头（含备用流）
+    loadConfigIntoForm(defaults);
     showToast('已恢复默认配置');
+  }
+
+  function onImportCameras() {
+    if (!confirm('确定要从 config.json 重新导入摄像头配置吗？\n\n当前未保存的编辑将丢失，其他设置（轮播间隔、广告视频等）不受影响。')) return;
+
+    _cameraDefaultsLoading = false;  // 重置锁，允许重新加载
+    var config = getConfig();
+    // 强制设置标志位，触发 cameras.json 加载
+    config._needsCameraDefaults = true;
+    config.videoStreams = [];
+    loadConfigIntoForm(config);
+    showToast('正在从 config.json 导入摄像头...');
   }
 
   function showToast(msg) {

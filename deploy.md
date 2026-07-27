@@ -29,8 +29,26 @@
   "parkid_a": "cbssstcc",
   "parkid_b": "cbsjqtcl",
   "cameras": [
-    { "name": "入口", "rtsp": "rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101" },
-    { "name": "停车场A", "rtsp": "rtsp://admin:password@192.168.1.101:554/Streaming/Channels/101" }
+    {
+      "name": "入口",
+      "rtsp": "rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101",
+      "backups": [
+        {
+          "name": "入口备用机（不同角度）",
+          "rtsp": "rtsp://admin:password@192.168.1.101:554/Streaming/Channels/101"
+        }
+      ]
+    },
+    { 
+      "name": "停车场A", 
+      "rtsp": "rtsp://admin:password@192.168.1.102:554/Streaming/Channels/101",
+      "backups": [
+        {
+          "name": "入口备用机（不同角度）",
+          "rtsp": "rtsp://admin:password@192.168.1.101:554/Streaming/Channels/101"
+        }
+      ]
+    }
   ]
 }
 ```
@@ -41,10 +59,15 @@
 | `parkid_b` | 停车楼 ParkID |
 | `cameras[].name` | 摄像头名称，如"入口""停车场A"，会显示在大屏上 |
 | `cameras[].rtsp` | 海康摄像头 RTSP 地址，替换 IP、账号、密码 |
+| `cameras[].backups` | **（可选）** 该摄像头的备用 RTSP 流列表，主画面断流时自动切换 |
+| `backups[].name` | 备用流名称，用于 MediaMTX 配置注释 |
+| `backups[].rtsp` | 备用摄像头的 RTSP 地址 |
 | `video_dir` | 本地视频存放目录，默认 `D:/videos` |
 | `server_port` | 服务端口号，一般不需要改 |
 
 > **RTSP 地址格式参考**：海康威视主码流 `rtsp://用户名:密码@摄像头IP:554/Streaming/Channels/101`
+
+> **主备切换说明**：多个摄像头按轮播间隔循环切换，每个摄像头的备用流在主画面断流时依次切换（主 → 备1 → 备2 → … → 下一个摄像头）。主画面持续可达 3 分钟后自动切回。没有备用流时单摄像头也能自愈（原地重建连接）。无需备用流时，`backups` 字段可以省略或设为 `[]`。
 
 ### 2.2 启动和停止
 
@@ -70,7 +93,7 @@
 2. 编辑 `config.json` 中的 `cameras` 数组
 3. 双击 `启动.bat` 重新启动
 
-如需更多配置（轮播间隔、广告视频、备用流等），打开浏览器访问 `http://localhost:3000/admin.html` 进行设置，保存后刷新大屏页面即可生效。
+如需更多配置（轮播间隔、广告视频等），打开浏览器访问 `http://localhost:3000/admin.html` 进行设置，保存后刷新大屏页面即可生效。
 
 ---
 

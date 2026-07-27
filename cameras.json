@@ -1,0 +1,13 @@
+[
+  {
+    "url": "/webrtc/cam_1",
+    "type": "webrtc",
+    "label": "入口",
+    "backups": [
+      {
+        "url": "/webrtc/cam_1_bak_1",
+        "type": "webrtc"
+      }
+    ]
+  }
+]

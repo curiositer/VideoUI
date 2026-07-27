@@ -7,7 +7,7 @@
     "video_dir": "本地视频文件存放目录",
     "mediamtx_path": "MediaMTX 安装路径（mediamtx.exe 所在位置）",
     "nginx_path": "Nginx 安装路径（nginx.exe 所在位置）",
-    "cameras": "摄像头列表：每行一个摄像头，填「name」和「rtsp」地址即可"
+    "cameras": "摄像头列表。每个摄像头可配 backups（备用 RTSP 流），主画面断流时自动切换"
   },
 
   "server_port": 3000,
@@ -20,7 +20,13 @@
   "cameras": [
     {
       "name": "入口",
-      "rtsp": "rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101"
+      "rtsp": "rtsp://admin:password@192.168.1.100:554/Streaming/Channels/101",
+      "backups": [
+        {
+          "name": "入口备用机（不同角度）",
+          "rtsp": "rtsp://admin:password@192.168.1.101:554/Streaming/Channels/101"
+        }
+      ]
     }
   ]
 }
