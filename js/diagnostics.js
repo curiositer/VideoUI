@@ -47,7 +47,15 @@
   }
 
   function nowISO() {
-    return new Date().toISOString();
+    // 使用本地时间（北京时间 UTC+8），toISOString() 返回的是 UTC 会少 8 小时
+    var d = new Date();
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return d.getFullYear() + '-' +
+           pad(d.getMonth() + 1) + '-' +
+           pad(d.getDate()) + 'T' +
+           pad(d.getHours()) + ':' +
+           pad(d.getMinutes()) + ':' +
+           pad(d.getSeconds());
   }
 
   function detectCategory(message) {
