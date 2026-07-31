@@ -2,14 +2,43 @@
 """停车场大屏 — 一键启动器
 
 读取 config.json，自动生成配置并启动所有服务。
-用法: python tools/launch.py
+用法: python tools/launch.py [--log-file <path>]
+      --log-file  可选，同时将输出写入指定日志文件（用于定时任务无人值守）
 """
 
+import argparse
 import json
 import os
 import subprocess
 import sys
 import time
+
+
+class TeeWriter:
+    """同时写入原始 stdout 和日志文件。"""
+    def __init__(self, original_stdout, log_path):
+        self.original = original_stdout
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        self.log = open(log_path, 'a', encoding='utf-8')
+
+    def write(self, data):
+        self.original.write(data)
+        self.log.write(data)
+
+    def flush(self):
+        try:
+            self.original.flush()
+        except (ValueError, OSError):
+            pass
+        try:
+            self.log.flush()
+        except (ValueError, OSError):
+            pass
+
+    def close(self):
+        self.log.close()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "config.json")
@@ -46,6 +75,17 @@ def start_process(exe_path, work_dir, title):
 
 
 def main():
+    parser = argparse.ArgumentParser(description='停车场大屏 — 一键启动器')
+    parser.add_argument('--log-file', type=str, default=None,
+                        help='日志文件路径，同时将输出写入该文件')
+    args = parser.parse_args()
+
+    # 如果指定了日志文件，将输出同时写入日志
+    tee = None
+    if args.log_file:
+        tee = TeeWriter(sys.stdout, args.log_file)
+        sys.stdout = tee
+
     print("=" * 60)
     print("  停车场大屏 — 一键启动")
     print("=" * 60)
@@ -104,8 +144,8 @@ def main():
     print()
 
     # ── 等待服务就绪 ──
-    print("等待服务就绪（5 秒）...")
-    time.sleep(5)
+    print("等待服务就绪（12 秒）...")
+    time.sleep(12)
 
     # ── 打开 Chrome 浏览器（全屏 Kiosk 模式）──
     print("打开 Chrome 浏览器...")
@@ -139,6 +179,9 @@ def main():
     print("  需要停止服务？双击「停止.bat」。")
     print("=" * 60)
     print()
+
+    if tee:
+        tee.close()
 
 
 if __name__ == "__main__":

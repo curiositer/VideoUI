@@ -74,7 +74,7 @@
 | 操作 | 方法 |
 |------|------|
 | **启动系统** | 双击 `启动.bat` → 等待 5 秒 → 浏览器自动打开大屏 |
-| **停止系统** | 双击 `停止.bat` → 关闭所有服务 |
+| **停止系统** | 双击 `停止.bat` → 关闭所有服务及 Chrome 大屏 |
 
 `启动.bat` 自动完成以下工作（用户无需关心）：
 1. 根据 `config.json` 自动生成 MediaMTX 配置（`D:\mediamtx\mediamtx.yml`）
@@ -85,6 +85,8 @@
 6. 打开浏览器访问 `http://localhost`
 
 > **提示**：关闭三个服务窗口不会停止系统 — 服务在后台运行。需要停止时请双击 `停止.bat`。
+>
+> **定时自动启停**：安装 `setup_scheduled_tasks.bat` 后，上述操作每天 06:00 / 15:00 自动执行（见第 12 章）。
 
 ### 2.3 修改摄像头
 
@@ -351,3 +353,71 @@ nssm stop MediaMTX
 - 事件时间线（可按级别筛选）
 - 摄像头故障切换详情
 - 服务运行时长
+
+---
+
+## 12. 每日定时自动启停（推荐 ⭐）
+
+### 背景
+
+长期运行可能导致 WebRTC 连接老化、内存泄漏等问题累积，最终崩溃。每天定时重启相当于"每日自愈"——即使某天下午崩溃了，第二天早上 6:00 也会自动恢复，无需人工介入。
+
+### 一次性安装
+
+右键 **`setup_scheduled_tasks.bat`** → **以管理员身份运行**（确保在自动登录的那个 Windows 账号下执行）。
+
+脚本会创建两个 Windows 定时任务：
+
+| 任务名称 | 时间 | 操作 |
+|---------|------|------|
+| `ParkingDisplay_Start` | 每天 06:00 | 先停止残留进程 → 启动 MediaMTX / Nginx / Python 服务 → 打开 Chrome 大屏 |
+| `ParkingDisplay_Stop` | 每天 15:00 | 停止 Nginx / MediaMTX / Python 服务 → 关闭 Chrome 大屏 |
+
+### 日志
+
+- 启动日志：`logs\scheduled_start.log`（含每次健康检查 HTTP 状态码）
+- 停止日志：`logs\scheduled_stop.log`
+- 每天追加几 KB，可随时删除
+
+### 手动测试
+
+```bash
+# 手动触发启动（测试用）
+schtasks /Run /TN "ParkingDisplay_Start"
+
+# 手动触发停止
+schtasks /Run /TN "ParkingDisplay_Stop"
+
+# 查看任务详情（含下次运行时间）
+schtasks /Query /TN "ParkingDisplay_Start" /V
+```
+
+### 修改时间
+
+```bash
+# 改启动时间为 7:00
+schtasks /Change /TN "ParkingDisplay_Start" /ST 07:00
+
+# 改停止时间为 16:00
+schtasks /Change /TN "ParkingDisplay_Stop" /ST 16:00
+```
+
+### 卸载
+
+```bash
+schtasks /Delete /TN "ParkingDisplay_Start" /F
+schtasks /Delete /TN "ParkingDisplay_Stop" /F
+```
+
+### 前提与注意事项
+
+- **电脑需保持开机并已登录**（任务仅在交互桌面会话中运行，Chrome 需要桌面才能显示）
+- **建议开启 Windows 自动登录**：按 Win+R → `netplwiz` → 取消勾选"要使用本计算机，用户必须输入用户名和密码" → 输入密码确认
+- **电源选项关闭睡眠**：设置 → 电源 → 睡眠 → 改为"从不"（睡眠状态下定时任务不会触发）
+- **错过补跑**：如果电脑夜间关机导致错过 6:00 启动，打开 `taskschd.msc`（任务计划程序）→ 右键任务 → 属性 → 设置 → 勾选"如果错过计划的开始时间，则尽快启动任务"
+
+### 与手动启停的关系
+
+- 定时任务使用独立脚本 `scheduled_start.bat` / `scheduled_stop.bat`（无人值守，无 `pause`）
+- 手动操作请继续使用原来的 `启动.bat` / `停止.bat`（有 `pause`，方便查看输出）
+- 两者互不干扰，可同时存在
