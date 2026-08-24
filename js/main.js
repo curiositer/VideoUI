@@ -976,7 +976,7 @@
 
       var combined = {
         total: totalA + totalB,
-        availTotal: availA + availB,
+        availTotal: availA + availB - 60,
       };
 
       // Only count as valid if at least one lot has reported
