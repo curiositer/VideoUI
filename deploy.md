@@ -64,6 +64,13 @@
 | `backups[].rtsp` | 备用摄像头的 RTSP 地址 |
 | `video_dir` | 本地视频存放目录，默认 `D:/videos` |
 | `server_port` | 服务端口号，一般不需要改 |
+| `openapi.enabled` | 是否启用第三方车场 C（开放 API 拉取），默认 `false`，拿到平台参数后改为 `true` |
+| `openapi.host` | 第三方平台域名，如 `https://api.xxx.com`（末尾不带斜杠） |
+| `openapi.path` | 接口路径，默认 `/openapi/open/getParkEmpty`，一般不用改 |
+| `openapi.appId` | 平台分配的 appId（签名参数，明文传输） |
+| `openapi.appSecret` | 平台分配的 appSecret（仅服务端用于计算签名，不会发送、请勿外传） |
+| `openapi.parkId` | 第三方车场编号（接口 body 的 id 字段值），**勿与 parkid_a / parkid_b 相同** |
+| `openapi.pollInterval` | 拉取间隔（秒），默认 60 |
 
 > **RTSP 地址格式参考**：海康威视主码流 `rtsp://用户名:密码@摄像头IP:554/Streaming/Channels/101`
 
@@ -342,6 +349,7 @@ nssm stop MediaMTX
 | Chrome 显示白屏 | 1. 检查 Nginx 是否运行 `nssm status ParkingNginx` 2. 检查 Python 服务 `curl localhost:3000` |
 | 视频黑屏/加载中 | 1. 检查 MediaMTX `nssm status MediaMTX` 2. 检查摄像头 RTSP 是否能通 3. 查看 status.html 诊断仪表盘 |
 | 车位数据不更新 | 1. 检查 ParkingServer 状态 2. 确认停车场客户端 POST 是否正常 |
+| C 车场数据不变/为 0 | 1. 检查 config.json 的 `openapi.enabled` 与四个必填字段是否齐全 2. 查看服务端控制台的 `[OPENAPI]` 日志 3. `curl localhost:3000/api/health` 看 warnings |
 | 某进程反复崩溃 | nssm 会自动重启，检查 status.html 诊断日志排查根因 |
 | 停电后恢复 | 所有服务已注册为 `SERVICE_AUTO_START`，开机自动启动，无需人工干预 |
 
@@ -421,3 +429,66 @@ schtasks /Delete /TN "ParkingDisplay_Stop" /F
 - 定时任务使用独立脚本 `scheduled_start.bat` / `scheduled_stop.bat`（无人值守，无 `pause`）
 - 手动操作请继续使用原来的 `启动.bat` / `停止.bat`（有 `pause`，方便查看输出）
 - 两者互不干扰，可同时存在
+
+---
+
+## 13. 接入第三方车场 C（开放 API 拉取）
+
+第三个车场的车位数据不通过 POST `/parking` 上报，而是由 ParkingServer 周期性主动调用第三方平台接口获取，与 A/B 的数据一起合并显示在大屏上（总停车位 = A+B+C，总空闲车位 = A+B+C）。
+
+### 13.1 前置条件
+
+向第三方平台申请以下参数：
+
+| 参数 | 说明 |
+|------|------|
+| 域名 host | 接口地址，如 `https://api.xxx.com` |
+| appId | 标识访问者身份，明文传输 |
+| appSecret | 签名密钥，**只保存在本机 config.json，不随请求发送、请勿外传** |
+| 车场编号 id | 该车场在平台上的编号，即接口 body 中 `id` 字段的值 |
+
+### 13.2 配置方法
+
+编辑 `config.json`，修改 `openapi` 段（拿到参数后把 `enabled` 改为 `true` 并填好其余字段）：
+
+```json
+"openapi": {
+  "enabled": true,
+  "host": "https://api.xxx.com",
+  "path": "/openapi/open/getParkEmpty",
+  "appId": "平台提供的appId",
+  "appSecret": "平台提供的appSecret",
+  "parkId": "平台分配的车场编号",
+  "pollInterval": 60
+}
+```
+
+保存后**无需重启**，服务端在下一个轮询周期（最长 pollInterval 秒）内自动生效；也可重启 ParkingServer 立即生效。
+
+### 13.3 接口与签名说明
+
+- 请求方式：`POST {host}{path}?appId=xxx&timestamp=毫秒时间戳&sign=xxx`，body 为 `{"id": "车场编号"}`
+- 返回：`{"code":0, "data":{"totalPlot":"总车位", "emptyPlot":"剩余车位"}, "success":true}`（数值为字符串）
+- 签名算法：
+  1. 参与参数 = 除 `appId`/`appSecret`/`timestamp`/`sign` 外的全部请求参数（含 query 与 body），按参数名字典序排列
+  2. `signStr = "appId"+appId+"timestamp"+时间戳+"appSecret"+appSecret+各参数key+value直接拼接`（无分隔符；本接口业务参数只有 body 的 `id` 一项，因此形如 `appId…timestamp…appSecret…id车场编号`）
+  3. `sign = MD5(signStr) 大写`，拼在 URL 的 `sign=` 参数上
+- 官方示例验证：signStr 为 `appIdtDc6zHpftimestamp1622806861000appSecret1d85aa21e9d08d2ff4145f49d73aa77d3bd981dbcarNumber藏ZAA001parkId1376868353461542914` 时，sign 应为 `9264C99ED4A947F25FF2C9127CF06332`
+
+### 13.4 数据流与容错
+
+- 服务端守护线程每 `pollInterval` 秒拉取一次，成功后按 `openapi.parkId` 写入内存库
+- 拉取失败（网络/超时/返回码非 0/字段无法解析）时**保留上次有效值**，服务端控制台打印 `[OPENAPI]` 日志
+- 大屏合计自动包含 C；C 从未成功拉取过时按 0 计，不影响 A/B 显示
+
+### 13.5 验证方法
+
+```bash
+# 状态接口应出现 c 槽位（未启用或未拉到数据时为 null）
+curl http://localhost:3000/api/parking/status
+
+# 健康检查看 parking.c 与相关警告
+curl http://localhost:3000/api/health
+```
+
+打开 `http://localhost:3000/status.html` 诊断页，健康横幅的 warnings 中可看到第三方车场 C 的状态提示。

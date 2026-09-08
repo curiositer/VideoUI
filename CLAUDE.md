@@ -71,28 +71,30 @@ xxxx景区游客中心停车场    ← 景区名称 (cyan)
 总空闲车位：1098 个       ← A+B 空闲合计 (绿色)
 ```
 
-> 共 3 行信息：景区名称 + 总停车位（红）+ 总空闲车位（绿）。停车场 A 和停车楼 B 的数据在后端合并计算。
+> 共 3 行信息：景区名称 + 总停车位（红）+ 总空闲车位（绿）。停车场 A、停车楼 B 和第三方车场 C 的数据在前端合并计算（C 未启用时按 0 计）。
 
 ### 数据流
 
 1. 停车场客户端在车位变动时 POST 到 `/parking`，server.py 按 parkid 存入内存
-2. 前端 `main.js` 按 `pollInterval` 秒轮询 `GET /api/parking/status`，获取 A/B 两个车场最新数据
-3. 总停车位 = a.total + b.total（两个车场总车位之和，红色显示）
-4. 总空闲车位 = a.available + b.available（两个车场空闲车位之和，绿色显示）
-5. 配置在另一标签页修改时，`main.js` 通过 `storage` 事件自动热重载
+2. server.py 守护线程每 `openapi.pollInterval` 秒（默认 60）读取 config.json 的 openapi 段，用 appId/appSecret 对 `{"id": parkId}` 签名后 POST 第三方接口 `/openapi/open/getParkEmpty`，成功后将 totalPlot/emptyPlot 按 openapi.parkId 写入同一内存库；失败保留上次值
+3. 前端 `main.js` 按 `pollInterval` 秒轮询 `GET /api/parking/status`，获取 A/B/C 三个车场最新数据
+4. 总停车位 = a.total + b.total + c.total（三个车场总车位之和，红色显示）
+5. 总空闲车位 = a.available + b.available + c.available（三个车场空闲车位之和，绿色显示）
+6. 配置在另一标签页修改时，`main.js` 通过 `storage` 事件自动热重载；openapi 配置改动由服务端下一轮轮询自动生效（免重启）
 
 ### ParkID 映射
 
 - server.py 通过 `--parkid-a` / `--parkid-b` 启动参数指定 A/B 对应的 parkid
 - 前端 `config.js` 中的 `parkIdA` / `parkIdB` 需与服务端一致
 - A = 停车场（parking lot），B = 停车楼（parking building）
-- GET `/api/parking/status` 返回 `{a: {total, available}, b: {total, available}}`
-- 某车场尚未收到上报时对应值为 `null`，该行显示 `--`
+- C = 第三方车场（开放 API 拉取），parkid 取自 config.json 的 `openapi.parkId`（非 CLI 参数），随每次轮询重读、免重启生效；勿与 A/B parkid 相同
+- GET `/api/parking/status` 返回 `{a: {total, available}, b: {total, available}, c: {total, available}}`
+- 某车场尚未收到数据时对应值为 `null`，合计按 0 计
 
 ### API 约定
 
 - **POST `/parking`**：停车场客户端上报，body 包含 `parkid`、`spacetotal`、`spaceLeft` 等
-- **GET `/api/parking/status`**：前端轮询，返回 `{a: {total, available}, b: {total, available}}`
+- **GET `/api/parking/status`**：前端轮询，返回 `{a: {total, available}, b: {total, available}, c: {total, available}}`（c 由服务端从第三方接口拉取填充，不接收客户端 POST）
 - **GET `/api/video-list?folder=<subfolder>`**：列出视频目录中的文件，返回 `["file1.mp4", ...]`
 
 ### 视频播放模式（多摄像头轮播 + 主备切换 + 广告交替）

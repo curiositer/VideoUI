@@ -7,7 +7,15 @@
     "video_dir": "本地视频文件存放目录",
     "mediamtx_path": "MediaMTX 安装路径（mediamtx.exe 所在位置）",
     "nginx_path": "Nginx 安装路径（nginx.exe 所在位置）",
-    "cameras": "摄像头列表。每个摄像头可配 backups（备用 RTSP 流），主画面断流时自动切换"
+    "cameras": "摄像头列表。每个摄像头可配 backups（备用 RTSP 流），主画面断流时自动切换",
+    "openapi": "第三方车场 C 的数据来源（开放 API 拉取）。enabled 改为 true 并填好下方字段后保存，服务端最长一个轮询周期内自动生效；appSecret 为签名密钥，请勿外传",
+    "openapi.enabled": "是否启用第三方车场 C 拉取（默认 false = 暂不启用，拿到接口参数后再打开）",
+    "openapi.host": "第三方平台域名，如 https://api.xxx.com（末尾不要带斜杠）",
+    "openapi.path": "接口路径，默认 /openapi/open/getParkEmpty，一般不用改",
+    "openapi.appId": "平台分配的 appId（签名参数，明文传输）",
+    "openapi.appSecret": "平台分配的 appSecret（仅用于服务端计算签名，不会发送）",
+    "openapi.parkId": "第三方车场编号，即接口请求 body 中 id 字段的值（勿与 parkid_a / parkid_b 相同）",
+    "openapi.pollInterval": "拉取间隔（秒），默认 60"
   },
 
   "server_port": 3000,
@@ -28,5 +36,15 @@
         }
       ]
     }
-  ]
+  ],
+
+  "openapi": {
+    "enabled": false,
+    "host": "",
+    "path": "/openapi/open/getParkEmpty",
+    "appId": "",
+    "appSecret": "",
+    "parkId": "",
+    "pollInterval": 60
+  }
 }

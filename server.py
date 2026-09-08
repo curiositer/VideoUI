@@ -15,15 +15,18 @@ Endpoints:
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +41,28 @@ DIAG_MAX_DAYS = 30  # 自动清理 30 天前的日志
 _DIAG_WRITE_LOCK = threading.Lock()
 _SERVER_START_TIME = time.time()
 
+# --- 第三方车场 C（开放 API 拉取）---
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+OPENAPI_DEFAULTS = {
+    "enabled": False,
+    "host": "",
+    "path": "/openapi/open/getParkEmpty",
+    "appId": "",
+    "appSecret": "",
+    "parkId": "",
+    "pollInterval": 60,
+}
+OPENAPI_TIMEOUT = 10  # 单次 HTTP 请求超时（秒）
+
+_cfg_lock = threading.Lock()  # 保护以下 openapi 配置快照与状态
+_openapi_cfg = {}             # 最近一次成功解析的 openapi 配置快照（status/health 实时读取）
+_openapi_state = {            # 供 /api/health 展示
+    "enabled": False,         # 当前轮配置是否启用（且字段齐全）
+    "last_success_ts": 0.0,   # 最近成功拉取时间（epoch 秒），0 = 从未成功
+    "last_error": "",         # 最近一次失败原因（不含密钥）
+    "last_error_ts": 0.0,
+}
+
 
 def update_parking_data(parkid: str, data: dict) -> None:
     """Thread-safe update of in-memory parking data."""
@@ -51,18 +76,19 @@ def update_parking_data(parkid: str, data: dict) -> None:
         }
 
 
-def get_status(parkid_a: str, parkid_b: str) -> dict:
-    """Return {a: {...}, b: {...}} for frontend consumption."""
+def get_status(parkid_a: str, parkid_b: str, parkid_c: str = None) -> dict:
+    """Return {a, b, c} for frontend consumption. parkid_c=None 表示第三方车场未启用。"""
     with _store_lock:
         a = _store.get(parkid_a)
         b = _store.get(parkid_b)
+        c = _store.get(parkid_c) if parkid_c else None
 
     def fmt(entry):
         if entry is None:
             return None
         return {"total": entry["total"], "available": entry["available"]}
 
-    return {"a": fmt(a), "b": fmt(b)}
+    return {"a": fmt(a), "b": fmt(b), "c": fmt(c)}
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +264,189 @@ def _cleanup_loop():
 
 
 # ---------------------------------------------------------------------------
+# 第三方车场 C：开放 API 拉取（签名 + 周期轮询）
+# ---------------------------------------------------------------------------
+
+def _openapi_set_cfg(cfg: dict) -> None:
+    """保存配置快照（每轮轮询由 load_openapi_config 产生）。"""
+    with _cfg_lock:
+        _openapi_cfg.clear()
+        _openapi_cfg.update(cfg)
+
+
+def openapi_snapshot() -> dict:
+    """返回当前生效的 openapi 配置快照（副本，供 status/health 读取）。"""
+    with _cfg_lock:
+        return dict(_openapi_cfg)
+
+
+def _openapi_set_state(**kw) -> None:
+    with _cfg_lock:
+        _openapi_state.update(kw)
+
+
+def _openapi_state_get() -> dict:
+    with _cfg_lock:
+        return dict(_openapi_state)
+
+
+def load_openapi_config() -> dict:
+    """读取 config.json 的 openapi 段，容错返回配置快照。
+
+    - 文件缺失 / openapi 段缺失或格式错 → 返回禁用态并打日志
+    - JSON 损坏 → 保留上一份有效快照（用户保存到一半时不抖动）
+    - enabled=true 但 host/appId/appSecret/parkId 不全 → 视为未启用并告警
+    """
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            top = json.load(f)
+    except FileNotFoundError:
+        if _openapi_cfg.get("enabled"):
+            print("[OPENAPI] config.json 不存在，第三方车场 C 已停用", file=sys.stderr)
+        return dict(OPENAPI_DEFAULTS)
+    except json.JSONDecodeError as e:
+        print(f"[OPENAPI] config.json 解析失败（{e}），沿用上一份配置", file=sys.stderr)
+        return dict(_openapi_cfg) if _openapi_cfg else dict(OPENAPI_DEFAULTS)
+
+    oa = top.get("openapi")
+    if oa is None:
+        if _openapi_cfg.get("enabled"):
+            print("[OPENAPI] config.json 缺少 openapi 段，第三方车场 C 已停用", file=sys.stderr)
+        return dict(OPENAPI_DEFAULTS)
+    if not isinstance(oa, dict):
+        print("[OPENAPI] openapi 段格式错误（应为对象），第三方车场 C 已停用", file=sys.stderr)
+        return dict(OPENAPI_DEFAULTS)
+
+    cfg = dict(OPENAPI_DEFAULTS)
+    raw_enabled = oa.get("enabled", False)
+    cfg["enabled"] = (raw_enabled if isinstance(raw_enabled, bool)
+                      else str(raw_enabled).strip().lower() == "true")
+    cfg["host"] = str(oa.get("host", "") or "").strip().rstrip("/")
+    cfg["path"] = str(oa.get("path", "") or "").strip() or OPENAPI_DEFAULTS["path"]
+    cfg["appId"] = str(oa.get("appId", "") or "").strip()
+    cfg["appSecret"] = str(oa.get("appSecret", "") or "")
+    cfg["parkId"] = str(oa.get("parkId", "") or "").strip()
+    try:
+        cfg["pollInterval"] = max(5, int(oa.get("pollInterval", 60)))
+    except (TypeError, ValueError):
+        cfg["pollInterval"] = OPENAPI_DEFAULTS["pollInterval"]  # 手改坏类型时兜底
+
+    if cfg["enabled"]:
+        missing = [k for k in ("host", "appId", "appSecret", "parkId") if not cfg[k]]
+        if missing:
+            print(f"[OPENAPI] enabled=true 但字段缺失: {', '.join(missing)}，本次按未启用处理",
+                  file=sys.stderr)
+            cfg["enabled"] = False
+    return cfg
+
+
+def _openapi_sign(params, app_id: str, app_secret: str, timestamp: str) -> str:
+    """按平台签名算法计算 sign。
+
+    参与参数 = 除 appId/appSecret/timestamp/sign 外的全部请求参数（含 query 与 body），
+    按参数名升序；signStr = "appId"+appId+"timestamp"+timestamp+"appSecret"+appSecret
+    + 各参数 key+value 直接拼接（无分隔符）；md5 后转大写。
+    """
+    others = sorted(
+        (str(k), str(v)) for k, v in params
+        if k not in ("appId", "appSecret", "timestamp", "sign")
+    )
+    s = f"appId{app_id}timestamp{timestamp}appSecret{app_secret}"
+    for k, v in others:
+        s += k + v
+    return hashlib.md5(s.encode("utf-8")).hexdigest().upper()
+
+
+def _openapi_parse_int(v):
+    """解析 totalPlot/emptyPlot：兼容 "800"、" 356 "、"356.0" 或数字本身；
+    无法解析返回 None。"""
+    if v is None:
+        return None
+    try:
+        return int(str(v).strip())
+    except ValueError:
+        try:
+            return int(float(str(v).strip()))  # 兼容 "356.0"
+        except ValueError:
+            return None
+
+
+def _openapi_fetch(cfg: dict) -> dict:
+    """调用第三方接口，成功返回 {"total": int, "available": int}；失败抛异常。"""
+    ts = str(int(time.time() * 1000))  # 毫秒时间戳
+    # 本接口业务参数仅 body 的 {"id": parkId} 一项，参与签名
+    sign = _openapi_sign([("id", cfg["parkId"])], cfg["appId"], cfg["appSecret"], ts)
+    url = (f"{cfg['host']}{cfg['path']}"
+           f"?appId={quote(cfg['appId'], safe='')}&timestamp={ts}&sign={sign}")
+    body = json.dumps({"id": cfg["parkId"]}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=OPENAPI_TIMEOUT) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:200]}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"网络错误: {e.reason}")
+
+    code = payload.get("code")
+    if code not in (0, "0"):
+        raise RuntimeError(f"业务错误 code={code}: {payload.get('message', '')}")
+    data = payload.get("data") or {}
+    total = _openapi_parse_int(data.get("totalPlot"))
+    avail = _openapi_parse_int(data.get("emptyPlot"))
+    if total is None or avail is None:
+        raise RuntimeError(f"data 字段缺失或无法解析: totalPlot={data.get('totalPlot')!r}, "
+                           f"emptyPlot={data.get('emptyPlot')!r}")
+    avail = max(0, min(avail, total))  # 防御性钳制，防负数/超总位
+    return {"total": total, "available": avail}
+
+
+def _openapi_poll_once(cfg: dict) -> None:
+    """单轮拉取：成功写入内存库并刷新状态；失败仅记录、保留上次值。"""
+    if not (cfg.get("enabled") and cfg.get("host") and cfg.get("appId")
+            and cfg.get("appSecret") and cfg.get("parkId")):
+        _openapi_set_state(enabled=False)
+        return
+    try:
+        r = _openapi_fetch(cfg)
+        parkid = cfg["parkId"]
+        update_parking_data(parkid, {
+            "spacetotal": r["total"],
+            "spaceLeft": r["available"],
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        _openapi_set_state(enabled=True, last_success_ts=time.time(), last_error="")
+        print(f"[OPENAPI] 第三方车场 C 拉取成功: parkid={parkid} "
+              f"total={r['total']} left={r['available']}")
+    except Exception as e:
+        _openapi_set_state(enabled=True, last_error=str(e), last_error_ts=time.time())
+        print(f"[OPENAPI] 拉取失败（保留上次值）: {e}", file=sys.stderr)
+
+
+def _openapi_loop():
+    """后台守护线程：周期读取 config.json 并拉取第三方车场 C 数据。
+
+    每轮重读配置 → 修改 enabled/host/pollInterval 等免重启生效；
+    未启用时按默认间隔继续探测开关。任何异常不让线程退出。
+    """
+    while True:
+        try:
+            cfg = load_openapi_config()
+            _openapi_set_cfg(cfg)
+            if cfg["enabled"]:
+                _openapi_poll_once(cfg)
+                interval = cfg["pollInterval"]
+            else:
+                _openapi_set_state(enabled=False)
+                interval = OPENAPI_DEFAULTS["pollInterval"]
+        except Exception as e:  # 双保险：任何意外不让线程死掉
+            print(f"[OPENAPI] 循环异常: {e}", file=sys.stderr)
+            interval = OPENAPI_DEFAULTS["pollInterval"]
+        time.sleep(max(5, interval))
+
+
+# ---------------------------------------------------------------------------
 # MIME type helpers
 # ---------------------------------------------------------------------------
 MIME_MAP = {
@@ -355,9 +564,11 @@ class ParkingServer(SimpleHTTPRequestHandler):
             self._json_error(500, str(e))
 
     def _handle_status(self):
-        """Return latest data for both A and B lots."""
+        """Return latest data for A/B and third-party C lots."""
         try:
-            status = get_status(self.parkid_a, self.parkid_b)
+            snap = openapi_snapshot()
+            parkid_c = snap.get("parkId") if snap.get("enabled") else None
+            status = get_status(self.parkid_a, self.parkid_b, parkid_c)
             self._json_ok(status)
         except Exception as e:
             self._json_error(500, str(e))
@@ -459,12 +670,18 @@ class ParkingServer(SimpleHTTPRequestHandler):
         try:
             parking_a = None
             parking_b = None
+            parking_c = None
             has_data_a = False
             has_data_b = False
+            has_data_c = False
+
+            snap = openapi_snapshot()
+            c_enabled = bool(snap.get("enabled") and snap.get("parkId"))
 
             with _store_lock:
                 a = _store.get(self.parkid_a)
                 b = _store.get(self.parkid_b)
+                c = _store.get(snap.get("parkId")) if c_enabled else None
 
             if a:
                 has_data_a = True
@@ -484,6 +701,16 @@ class ParkingServer(SimpleHTTPRequestHandler):
                     "lastReport": time.strftime(
                         "%Y-%m-%dT%H:%M:%S",
                         time.localtime(b["updated_at"])
+                    ),
+                }
+            if c:
+                has_data_c = True
+                parking_c = {
+                    "total": c["total"],
+                    "available": c["available"],
+                    "lastReport": time.strftime(
+                        "%Y-%m-%dT%H:%M:%S",
+                        time.localtime(c["updated_at"])
                     ),
                 }
 
@@ -513,15 +740,24 @@ class ParkingServer(SimpleHTTPRequestHandler):
             if has_data_b and b.get("updated_at", 0) < stale_threshold:
                 warnings.append("停车楼 B 数据超过 10 分钟未更新")
                 status = "degraded"
-            if not has_data_a and not has_data_b:
+            if c_enabled:
+                if has_data_c and c.get("updated_at", 0) < stale_threshold:
+                    warnings.append("第三方车场 C 数据超过 10 分钟未更新")
+                    status = "degraded"
+                elif not has_data_c:
+                    st = _openapi_state_get()
+                    err_txt = f"（最近错误: {st['last_error']}）" if st["last_error"] else ""
+                    warnings.append(f"第三方车场 C 已启用但从未成功拉取{err_txt}")
+                    status = "degraded"
+            if not (has_data_a or has_data_b or has_data_c):
                 status = "error"
-                warnings.append("两个车场均无数据上报")
+                warnings.append("三个车场均无数据上报" if c_enabled else "两个车场均无数据上报")
 
             health = {
                 "status": status,
                 "uptime": int(now - _SERVER_START_TIME),
                 "serverTime": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "parking": {"a": parking_a, "b": parking_b},
+                "parking": {"a": parking_a, "b": parking_b, "c": parking_c},
                 "diagnosticsToday": summary["total"],
                 "errorsToday": errors_today,
                 "failoversToday": failovers_today,
@@ -677,11 +913,29 @@ def main():
     except Exception as e:
         print(f"[CLEANUP] 首次清理失败: {e}", file=sys.stderr)
 
+    # 启动第三方车场 C 拉取线程（守护线程；未启用时仅周期探测配置开关）
+    try:
+        _openapi_set_cfg(load_openapi_config())
+    except Exception as e:
+        print(f"[OPENAPI] 初始配置读取失败: {e}", file=sys.stderr)
+    openapi_thread = threading.Thread(target=_openapi_loop, daemon=True)
+    openapi_thread.start()
+    # 启动时检查 openapi.parkId 是否与 A/B 重复（重复会导致 C 数据覆盖 A/B）
+    _oa = openapi_snapshot()
+    if _oa.get("enabled") and _oa.get("parkId") in (args.parkid_a, args.parkid_b):
+        print(f"[OPENAPI] 警告: openapi.parkId 与 A/B parkid 重复: {_oa['parkId']}，"
+              f"C 数据会覆盖 A/B，请修改 config.json", file=sys.stderr)
+
     print(f"=" * 60)
     print(f"  Parking Display Server")
     print(f"  Listening on:  http://0.0.0.0:{args.port}")
     print(f"  ParkID A (停车场): {args.parkid_a}")
     print(f"  ParkID B (停车楼): {args.parkid_b}")
+    if _oa.get("enabled"):
+        print(f"  第三方车场 C:   已启用  host={_oa['host']}  parkId={_oa['parkId']}  "
+              f"每 {_oa['pollInterval']} 秒拉取")
+    else:
+        print(f"  第三方车场 C:   未启用（config.json 的 openapi.enabled=false 或字段未填）")
     print(f"  Video dir:      {args.video_dir}")
     print(f"  POST endpoint:  http://0.0.0.0:{args.port}/parking")
     print(f"  GET  endpoint:  http://0.0.0.0:{args.port}/api/parking/status")

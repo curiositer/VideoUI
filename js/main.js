@@ -967,20 +967,25 @@
 
       var a = data.a;  // parking lot (停车场)
       var b = data.b;  // parking building (停车楼)
+      var c = data.c;  // 第三方车场 C（null = 未启用或暂无数据）
 
       // Compute combined values
       var totalA = (a && typeof a.total === 'number') ? a.total : 0;
       var totalB = (b && typeof b.total === 'number') ? b.total : 0;
+      var totalC = (c && typeof c.total === 'number') ? c.total : 0;
       var availA = (a && typeof a.available === 'number') ? a.available : 0;
       var availB = (b && typeof b.available === 'number') ? b.available : 0;
+      var availC = (c && typeof c.available === 'number') ? c.available : 0;
 
       var combined = {
-        total: totalA + totalB,
-        availTotal: availA + availB - 60,
+        total: totalA + totalB + totalC,
+        availTotal: Math.max(availA + availB + availC -60, 0),
       };
 
       // Only count as valid if at least one lot has reported
-      var hasAnyData = (a !== null && a !== undefined) || (b !== null && b !== undefined);
+      var hasAnyData = (a !== null && a !== undefined) ||
+                       (b !== null && b !== undefined) ||
+                       (c !== null && c !== undefined);
 
       if (hasAnyData) {
         lastData = combined;
