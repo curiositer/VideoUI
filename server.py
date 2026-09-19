@@ -390,7 +390,7 @@ def _openapi_fetch(cfg: dict) -> dict:
         raise RuntimeError(f"网络错误: {e.reason}")
 
     code = payload.get("code")
-    if code not in (0, "0"):
+    if code not in (0, "0", 200, "200"):  # 0 或 HTTP 风格 200 均视为成功
         raise RuntimeError(f"业务错误 code={code}: {payload.get('message', '')}")
     data = payload.get("data") or {}
     total = _openapi_parse_int(data.get("totalPlot"))
