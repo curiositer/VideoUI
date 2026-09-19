@@ -369,11 +369,22 @@
       setTimeout(onReady, 150);
     }, { once: true });
 
-    // 8 秒安全超时：standby 始终未就绪时强制渐变（避免永久卡住）
+    // 8 秒安全超时：standby 始终未就绪时判断实际画面内容
+    // 有内容（playing 事件漏发）→ 强制渐变完成切换；
+    // 无内容（摄像头无推流、WHEP 挂起等待等）→ 视为连接失败，保持当前画面并切换下一个源，避免黑屏
     safetyTimeoutId = setTimeout(function () {
-      console.warn('备用视频就绪超时（8秒），强制渐变');
+      console.warn('备用视频就绪超时（8秒）');
       Diag.warn('video', '备用视频就绪超时', {url: source.url});
-      onReady();
+      var hasContent = standbyVideo.readyState >= 2 && (
+        (standbyVideo.srcObject && standbyVideo.srcObject.active) ||
+        (standbyVideo.src && standbyVideo.src !== '')
+      );
+      if (hasContent) {
+        console.warn('备用视频已有画面内容，强制渐变');
+        onReady();
+      } else {
+        onStandbyError('ready-timeout');
+      }
     }, 8000);
 
     // 错误处理：standby 连接失败 → 解锁并触发故障切换（跳过冷却，这是合法顺序切换）
@@ -412,13 +423,13 @@
 
     activeVideo.loop = true;
 
-    // 安全解锁定时器：如果 playing 事件 15 秒内未触发，强制解锁
+    // 安全超时定时器：playing 事件 8 秒内未触发视为连接失败，切换下一个源
     var directUnlockTimer = setTimeout(function () {
       if (switchLocked) {
-        console.warn('直接连接 playing 事件超时（15秒），强制解锁');
-        switchLocked = false;
+        console.warn('直接连接 playing 事件超时（8秒），切换到下一个源');
+        onActiveError('ready-timeout');
       }
-    }, 15000);
+    }, 8000);
 
     function onActiveError(err) {
       // 直接连接失败 → 解锁并触发顺序故障切换（跳过冷却）
@@ -676,6 +687,7 @@
     Diag.info('video', '摄像头轮播启动', {interval: interval, cameraCount: cameraList.length});
     cameraRotateTimerId = setInterval(function () {
       if (videoState !== 'camera') return;  // 广告播放期间不切换
+      if (switchLocked) return;             // 连接切换进行中：跳过本轮，索引不推进，避免打断故障切换链
       stopRecoveryCheck();                   // 切走后不再探测上一个摄像头的主画面
       currentCameraIndex = (currentCameraIndex + 1) % cameraList.length;
       currentBackupIndex = -1;               // 新摄像头从主画面开始
